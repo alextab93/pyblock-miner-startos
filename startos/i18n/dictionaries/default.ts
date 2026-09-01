@@ -41,6 +41,22 @@ const dict = {
   'View live hashrate, workers, shares, pool status, and recent mining events.': 37,
   'The mining dashboard is ready.': 38,
   'The mining dashboard is not ready.': 39,
+  'Miner Name': 40,
+  'A unique label shown in service health and the mining dashboard.': 41,
+  Enabled: 42,
+  'Start this miner when the service is running.': 43,
+  'CPU mining threads allocated to this miner.': 44,
+  'Total CPU Worker Budget': 45,
+  'The sum of CPU workers for enabled miners cannot exceed this shared limit. Values above visible CPUs are clamped by the miner processes.': 46,
+  Miners: 47,
+  'Configure up to eight independent miners, each with its own pool, payout address, network, and CPU worker allocation.': 48,
+  'Miner names must start with a letter or number and contain only letters, numbers, spaces, underscores, or hyphens.': 49,
+  'Miner names must be unique.': 50,
+  'At least one miner must be enabled.': 51,
+  'The total workers assigned to enabled miners must not exceed the CPU worker budget.': 52,
+  'Configure Miners': 53,
+  'Configure independent mining profiles, their CPU allocations, and the upstream donation.': 54,
+  'The miner configurations were saved. Running miners restart automatically when their settings change.': 55,
 } as const
 
 export type I18nKey = keyof typeof dict

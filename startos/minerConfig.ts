@@ -2,6 +2,7 @@ import { address, networks } from 'bitcoinjs-lib'
 import {
   type MinerConfig,
   type MinerNetwork,
+  type MinerProfile,
   type PoolSelection,
 } from './fileModels/minerConfig'
 
@@ -14,18 +15,25 @@ export const poolPresets = {
 } as const
 
 export type ConfigIssue =
+  | 'miner-name'
+  | 'duplicate-name'
+  | 'no-enabled-miners'
   | 'payout-address'
   | 'pool-network'
   | 'custom-stratum'
   | 'cpu-workers'
+  | 'cpu-budget'
   | 'donation-percent'
 
+export type ResolvedMiner = MinerProfile & { pool: string }
+
 export type ConfigValidation =
-  | { ok: true; value: MinerConfig; pool: string }
-  | { ok: false; issue: ConfigIssue }
+  | { ok: true; value: MinerConfig; miners: ResolvedMiner[] }
+  | { ok: false; issue: ConfigIssue; minerName?: string }
 
 const hostnamePattern =
   /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/
+const minerNamePattern = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,31}$/
 
 const bitcoinNetworks = {
   mainnet: networks.bitcoin,
@@ -60,22 +68,27 @@ export function normalizeStratum(value: string): string | null {
   return `${hostname}:${port}`
 }
 
-export function validateMinerConfig(config: MinerConfig): ConfigValidation {
-  const payoutAddress = config.payoutAddress.trim()
-  if (!isPayoutAddressValid(config.network, payoutAddress)) {
+function validateProfile(
+  profile: MinerProfile,
+): { ok: true; value: ResolvedMiner } | { ok: false; issue: ConfigIssue } {
+  const name = profile.name.trim()
+  if (!minerNamePattern.test(name)) return { ok: false, issue: 'miner-name' }
+
+  const payoutAddress = profile.payoutAddress.trim()
+  if (!isPayoutAddressValid(profile.network, payoutAddress)) {
     return { ok: false, issue: 'payout-address' }
   }
 
   let pool: string
-  let customStratum = config.customStratum.trim()
-  if (config.poolSelection === 'custom') {
+  let customStratum = profile.customStratum.trim()
+  if (profile.poolSelection === 'custom') {
     const normalized = normalizeStratum(customStratum)
     if (!normalized) return { ok: false, issue: 'custom-stratum' }
     pool = normalized
     customStratum = normalized
   } else {
-    const preset = poolPresets[config.poolSelection]
-    if (preset.network !== config.network) {
+    const preset = poolPresets[profile.poolSelection]
+    if (preset.network !== profile.network) {
       return { ok: false, issue: 'pool-network' }
     }
     pool = preset.endpoint
@@ -83,13 +96,33 @@ export function validateMinerConfig(config: MinerConfig): ConfigValidation {
   }
 
   if (
-    !Number.isInteger(config.cpuWorkers) ||
-    config.cpuWorkers < 1 ||
-    config.cpuWorkers > 256
+    !Number.isInteger(profile.cpuWorkers) ||
+    profile.cpuWorkers < 1 ||
+    profile.cpuWorkers > 256
   ) {
     return { ok: false, issue: 'cpu-workers' }
   }
 
+  return {
+    ok: true,
+    value: {
+      ...profile,
+      name,
+      payoutAddress,
+      customStratum,
+      pool,
+    },
+  }
+}
+
+export function validateMinerConfig(config: MinerConfig): ConfigValidation {
+  if (
+    !Number.isInteger(config.cpuBudget) ||
+    config.cpuBudget < 1 ||
+    config.cpuBudget > 256
+  ) {
+    return { ok: false, issue: 'cpu-budget' }
+  }
   if (
     !Number.isFinite(config.donationPercent) ||
     config.donationPercent < 2 ||
@@ -98,13 +131,50 @@ export function validateMinerConfig(config: MinerConfig): ConfigValidation {
     return { ok: false, issue: 'donation-percent' }
   }
 
+  const miners: ResolvedMiner[] = []
+  const normalizedNames = new Set<string>()
+  for (const profile of config.miners) {
+    const validation = validateProfile(profile)
+    if (!validation.ok) {
+      return {
+        ok: false,
+        issue: validation.issue,
+        minerName: profile.name.trim() || 'Unnamed miner',
+      }
+    }
+    const normalizedName = validation.value.name.toLowerCase()
+    if (normalizedNames.has(normalizedName)) {
+      return {
+        ok: false,
+        issue: 'duplicate-name',
+        minerName: validation.value.name,
+      }
+    }
+    normalizedNames.add(normalizedName)
+    if (validation.value.enabled) miners.push(validation.value)
+  }
+
+  if (miners.length === 0) return { ok: false, issue: 'no-enabled-miners' }
+  const allocatedWorkers = miners.reduce(
+    (total, miner) => total + miner.cpuWorkers,
+    0,
+  )
+  if (allocatedWorkers > config.cpuBudget) {
+    return { ok: false, issue: 'cpu-budget' }
+  }
+
   return {
     ok: true,
-    pool,
+    miners,
     value: {
-      ...config,
-      payoutAddress,
-      customStratum,
+      cpuBudget: config.cpuBudget,
+      donationPercent: config.donationPercent,
+      miners: config.miners.map((profile) => {
+        const resolved = validateProfile(profile)
+        if (!resolved.ok) return profile
+        const { pool, ...value } = resolved.value
+        return value
+      }),
     },
   }
 }

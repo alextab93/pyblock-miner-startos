@@ -1,18 +1,18 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:0',
+  version: '0.1.0:1',
   releaseNotes: {
     en_US:
-      'Adds a lightweight read-only mining dashboard with live session metrics.',
+      'Adds configurable multi-miner profiles with independent pools, payout addresses, CPU workers, and combined dashboard metrics.',
     es_ES:
-      'Añade un panel de minería ligero y de solo lectura con métricas de sesión en vivo.',
+      'Añade perfiles configurables de múltiples mineros con pools, direcciones de pago, trabajadores de CPU y métricas combinadas independientes.',
     de_DE:
-      'Fügt ein leichtes schreibgeschütztes Mining-Dashboard mit Live-Sitzungsmetriken hinzu.',
+      'Fügt konfigurierbare Multi-Miner-Profile mit unabhängigen Pools, Auszahlungsadressen, CPU-Workern und kombinierten Dashboard-Metriken hinzu.',
     pl_PL:
-      'Dodaje lekki panel kopania tylko do odczytu z bieżącymi metrykami sesji.',
+      'Dodaje konfigurowalne profile wielu górników z niezależnymi pulami, adresami wypłat, wątkami CPU i połączonymi metrykami panelu.',
     fr_FR:
-      'Ajoute un tableau de bord de minage léger en lecture seule avec les métriques de session en direct.',
+      'Ajoute des profils multi-mineurs configurables avec des pools, adresses de paiement, workers CPU et métriques combinées indépendants.',
   },
   migrations: {
     up: async ({ effects }) => {},

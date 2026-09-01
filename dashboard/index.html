@@ -39,6 +39,10 @@
           <p class="label">Network</p>
           <p class="network" id="network">Unknown</p>
           <p class="pool" id="pool">Waiting for configuration</p>
+          <p class="hero-stat">
+            <span class="hero-stat-label">Pool height</span>
+            <span class="hero-stat-value" id="pool-height">Unavailable</span>
+          </p>
         </div>
       </section>
 
@@ -65,76 +69,68 @@
         </article>
       </section>
 
-      <section class="panel chart-panel" aria-labelledby="chart-title">
+      <section class="panel miners-panel" aria-labelledby="miners-title">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">SESSION</p>
-            <h2 id="chart-title">Hashrate history</h2>
+            <p class="eyebrow">CONFIGURED MINERS</p>
+            <h2 id="miners-title">Fleet overview</h2>
           </div>
-          <p class="chart-range">Recent samples</p>
         </div>
-        <div class="chart-plot">
-          <svg
-            id="hashrate-chart"
-            class="chart"
-            viewBox="0 0 800 180"
-            preserveAspectRatio="none"
-            role="img"
-            tabindex="0"
-            aria-labelledby="chart-title chart-description"
-          >
-            <desc id="chart-description">
-              Recent session hashrate samples. Hover or use the arrow keys to
-              inspect exact values.
-            </desc>
-            <defs>
-              <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#00f33d" stop-opacity="0.34" />
-                <stop offset="1" stop-color="#00f33d" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <path class="chart-grid" d="M0 45H800 M0 90H800 M0 135H800" />
-            <path id="chart-area" class="chart-area" d="M0 180H800Z" />
-            <polyline id="chart-line" class="chart-line" points="" />
-            <line
-              id="chart-guide"
-              class="chart-guide"
-              y1="20"
-              y2="170"
-              hidden
-            />
-            <circle id="chart-point" class="chart-point" r="5" hidden />
-            <rect class="chart-hit-area" width="800" height="180" />
-          </svg>
-          <div
-            id="chart-tooltip"
-            class="chart-tooltip"
-            role="status"
-            hidden
-          ></div>
-        </div>
-        <div class="chart-footer">
-          <span id="chart-min">Min 0 H/s</span>
-          <span id="chart-max">Peak 0 H/s</span>
-        </div>
+        <div class="miners" id="miners"></div>
       </section>
-
       <div class="lower-grid">
-        <section class="panel" aria-labelledby="details-title">
+        <section class="panel chart-panel" aria-labelledby="chart-title">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">CURRENT WORK</p>
-              <h2 id="details-title">Miner details</h2>
+              <p class="eyebrow">SESSION</p>
+              <h2 id="chart-title">Hashrate history</h2>
             </div>
+            <p class="chart-range">Recent samples</p>
           </div>
-          <dl class="details">
-            <div><dt>Pool height</dt><dd id="pool-height">Unavailable</dd></div>
-            <div><dt>Pool difficulty</dt><dd id="difficulty">Unavailable</dd></div>
-            <div><dt>Pool miners</dt><dd id="pool-miners">Unavailable</dd></div>
-            <div><dt>Pool hashrate</dt><dd id="pool-hashrate">Unavailable</dd></div>
-            <div><dt>Payout address</dt><dd id="address">Unavailable</dd></div>
-          </dl>
-          <div class="workers" id="workers"></div>
+          <div class="chart-plot">
+            <svg
+              id="hashrate-chart"
+              class="chart"
+              viewBox="0 0 800 180"
+              preserveAspectRatio="none"
+              role="img"
+              tabindex="0"
+              aria-labelledby="chart-title chart-description"
+            >
+              <desc id="chart-description">
+                Recent session hashrate samples. Hover or use the arrow keys to
+                inspect exact values.
+              </desc>
+              <defs>
+                <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#00f33d" stop-opacity="0.34" />
+                  <stop offset="1" stop-color="#00f33d" stop-opacity="0" />
+                </linearGradient>
+              </defs>
+              <path class="chart-grid" d="M0 45H800 M0 90H800 M0 135H800" />
+              <path id="chart-area" class="chart-area" d="M0 180H800Z" />
+              <polyline id="chart-line" class="chart-line" points="" />
+              <line
+                id="chart-guide"
+                class="chart-guide"
+                y1="20"
+                y2="170"
+                hidden
+              />
+              <circle id="chart-point" class="chart-point" r="5" hidden />
+              <rect class="chart-hit-area" width="800" height="180" />
+            </svg>
+            <div
+              id="chart-tooltip"
+              class="chart-tooltip"
+              role="status"
+              hidden
+            ></div>
+          </div>
+          <div class="chart-footer">
+            <span id="chart-min">Min 0 H/s</span>
+            <span id="chart-max">Peak 0 H/s</span>
+          </div>
         </section>
 
         <section class="panel events-panel" aria-labelledby="events-title">

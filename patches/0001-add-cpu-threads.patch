@@ -1,5 +1,5 @@
 diff --git a/src/main.rs b/src/main.rs
-index 0d2f5ae..679f16a 100644
+index 0d2f5ae..30408e1 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -5,7 +5,7 @@
@@ -31,20 +31,21 @@ index 0d2f5ae..679f16a 100644
      log: VecDeque<String>,
      started: Option<Instant>,
      net_ok: bool,
-@@ -234,6 +240,144 @@ impl Stats {
+@@ -234,6 +240,193 @@ impl Stats {
      }
  }
 
-+#[derive(Serialize)]
++#[derive(Deserialize, Serialize)]
 +#[serde(rename_all = "camelCase")]
 +struct DashboardWorker {
 +    name: String,
 +    hashrate_hps: f64,
 +}
 +
-+#[derive(Serialize)]
++#[derive(Deserialize, Serialize)]
 +#[serde(rename_all = "camelCase")]
 +struct DashboardStatus {
++    miner_name: String,
 +    state: String,
 +    state_label: String,
 +    connected: bool,
@@ -61,6 +62,7 @@ index 0d2f5ae..679f16a 100644
 +    rejection_rate: f64,
 +    blocks: u64,
 +    best_share: String,
++    best_share_value: f64,
 +    current_difficulty: String,
 +    pool_height: Option<u64>,
 +    pool_miners: Option<u64>,
@@ -69,7 +71,28 @@ index 0d2f5ae..679f16a 100644
 +    events: Vec<String>,
 +}
 +
-+fn dashboard_status(st: &Stats) -> DashboardStatus {
++#[derive(Clone, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct DashboardPeer {
++    name: String,
++    port: u16,
++}
++
++#[derive(Serialize)]
++#[serde(rename_all = "camelCase")]
++struct DashboardFleet {
++    primary: DashboardStatus,
++    peers: Vec<DashboardPeerResult>,
++}
++
++#[derive(Serialize)]
++#[serde(rename_all = "camelCase")]
++struct DashboardPeerResult {
++    name: String,
++    status: Option<DashboardStatus>,
++}
++
++fn dashboard_status(st: &Stats, miner_name: &str) -> DashboardStatus {
 +    let (state, state_label) = if st.paused {
 +        ("paused", "Paused")
 +    } else if st.connected && st.hr_total > 0.0 {
@@ -90,6 +113,7 @@ index 0d2f5ae..679f16a 100644
 +        hashrate_hps: st.gpu_ghs.get(index).copied().unwrap_or(0.0) * 1e9,
 +    }).collect();
 +    DashboardStatus {
++        miner_name: miner_name.into(),
 +        state: state.into(),
 +        state_label: state_label.into(),
 +        connected: st.connected,
@@ -106,6 +130,7 @@ index 0d2f5ae..679f16a 100644
 +        rejection_rate,
 +        blocks: st.blocks,
 +        best_share: fmt_diff(st.best_diff),
++        best_share_value: st.best_diff,
 +        current_difficulty: if st.diff > 0.0 { fmt_diff(st.diff) } else { "Unavailable".into() },
 +        pool_height: if st.net_ok && st.net_height > 0 { Some(st.net_height) } else { None },
 +        pool_miners: if st.net_ok { Some(st.net_miners) } else { None },
@@ -115,7 +140,30 @@ index 0d2f5ae..679f16a 100644
 +    }
 +}
 +
-+fn dashboard_http_response(method: &str, request_path: &str, st: &Stats) -> Vec<u8> {
++fn fetch_dashboard_peer(peer: &DashboardPeer) -> Option<DashboardStatus> {
++    let address = format!("127.0.0.1:{}", peer.port).parse().ok()?;
++    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(250)).ok()?;
++    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
++    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
++    stream.write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ok()?;
++    let mut response = Vec::new();
++    stream.read_to_end(&mut response).ok()?;
++    if !response.starts_with(b"HTTP/1.1 200 OK") { return None; }
++    let body_offset = response.windows(4).position(|value| value == b"\r\n\r\n")? + 4;
++    serde_json::from_slice(&response[body_offset..]).ok()
++}
++
++fn dashboard_fleet(st: &Stats, miner_name: &str, peers: &[DashboardPeer]) -> DashboardFleet {
++    DashboardFleet {
++        primary: dashboard_status(st, miner_name),
++        peers: peers.iter().map(|peer| DashboardPeerResult {
++            name: peer.name.clone(),
++            status: fetch_dashboard_peer(peer),
++        }).collect(),
++    }
++}
++
++fn dashboard_http_response(method: &str, request_path: &str, st: &Stats, miner_name: &str, peers: &[DashboardPeer]) -> Vec<u8> {
 +    let path = request_path.split('?').next().unwrap_or(request_path);
 +    let (status, content_type, body) = if method != "GET" && method != "HEAD" {
 +        ("405 Method Not Allowed", "text/plain; charset=utf-8", b"Method not allowed".to_vec())
@@ -125,7 +173,8 @@ index 0d2f5ae..679f16a 100644
 +            "/app.css" => ("200 OK", "text/css; charset=utf-8", DASHBOARD_CSS.to_vec()),
 +            "/app.js" => ("200 OK", "text/javascript; charset=utf-8", DASHBOARD_JS.to_vec()),
 +            "/icon.svg" => ("200 OK", "image/svg+xml", DASHBOARD_ICON.to_vec()),
-+            "/api/status" => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&dashboard_status(st)).unwrap_or_else(|_| b"{}".to_vec())),
++            "/api/status" => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&dashboard_status(st, miner_name)).unwrap_or_else(|_| b"{}".to_vec())),
++            "/api/miners" => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&dashboard_fleet(st, miner_name, peers)).unwrap_or_else(|_| b"{}".to_vec())),
 +            _ => ("404 Not Found", "text/plain; charset=utf-8", b"Not found".to_vec()),
 +        }
 +    };
@@ -138,7 +187,7 @@ index 0d2f5ae..679f16a 100644
 +    response
 +}
 +
-+fn handle_dashboard_connection(mut stream: TcpStream, stats: &Arc<Mutex<Stats>>) {
++fn handle_dashboard_connection(mut stream: TcpStream, stats: &Arc<Mutex<Stats>>, miner_name: &str, peers: &[DashboardPeer]) {
 +    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
 +    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
 +    let mut request = [0u8; 8192];
@@ -153,22 +202,22 @@ index 0d2f5ae..679f16a 100644
 +    let response = if method.is_empty() || path.is_empty() {
 +        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
 +    } else {
-+        dashboard_http_response(method, path, &stats.lock().unwrap())
++        dashboard_http_response(method, path, &stats.lock().unwrap(), miner_name, peers)
 +    };
 +    let _ = stream.write_all(&response);
 +}
 +
-+fn spawn_dashboard(stats: Arc<Mutex<Stats>>) {
++fn spawn_dashboard(stats: Arc<Mutex<Stats>>, port: u16, miner_name: String, peers: Vec<DashboardPeer>) {
 +    std::thread::spawn(move || {
-+        let listener = match TcpListener::bind(("0.0.0.0", DASHBOARD_PORT)) {
++        let listener = match TcpListener::bind(("0.0.0.0", port)) {
 +            Ok(listener) => listener,
 +            Err(error) => {
-+                eprintln!("Mining dashboard failed to bind on port {}: {}", DASHBOARD_PORT, error);
++                eprintln!("Mining dashboard failed to bind on port {}: {}", port, error);
 +                return;
 +            }
 +        };
 +        for stream in listener.incoming() {
-+            if let Ok(stream) = stream { handle_dashboard_connection(stream, &stats); }
++            if let Ok(stream) = stream { handle_dashboard_connection(stream, &stats, &miner_name, &peers); }
 +        }
 +    });
 +}
@@ -176,7 +225,7 @@ index 0d2f5ae..679f16a 100644
  fn floor_pot(diff: f64) -> u32 {
      let d = if diff >= 1.0 { diff as u64 } else { 1 };
      63u32.saturating_sub(d.leading_zeros())
-@@ -306,6 +450,83 @@ fn fmt_diff(d: f64) -> String {
+@@ -306,6 +499,84 @@ fn fmt_diff(d: f64) -> String {
      else { format!("{:.2}", d) }
  }
 
@@ -223,13 +272,14 @@ index 0d2f5ae..679f16a 100644
 +        stats.started = Some(Instant::now() - Duration::from_secs(90));
 +        stats.logline("share accepted".into());
 +
-+        let response = dashboard_http_response("GET", "/api/status", &stats);
++        let response = dashboard_http_response("GET", "/api/status", &stats, "Miner 1", &[]);
 +        let response = String::from_utf8(response).expect("response should be UTF-8");
 +        let (headers, body) = response.split_once("\r\n\r\n").expect("response should contain headers");
 +        assert!(headers.starts_with("HTTP/1.1 200 OK"));
 +        assert!(headers.contains("Content-Type: application/json"));
 +        let body: Value = serde_json::from_str(body).expect("status should be JSON");
 +        assert_eq!(body["state"], "mining");
++        assert_eq!(body["minerName"], "Miner 1");
 +        assert_eq!(body["hashrate"], "456.00 kH/s");
 +        assert_eq!(body["hashrateHps"], 456000.0);
 +        assert_eq!(body["workerCount"], 1);
@@ -244,15 +294,15 @@ index 0d2f5ae..679f16a 100644
 +    #[test]
 +    fn dashboard_serves_secure_read_only_assets() {
 +        let stats = Stats::default();
-+        let page = String::from_utf8(dashboard_http_response("GET", "/", &stats)).expect("page should be UTF-8");
++        let page = String::from_utf8(dashboard_http_response("GET", "/", &stats, "Miner 1", &[])).expect("page should be UTF-8");
 +        assert!(page.starts_with("HTTP/1.1 200 OK"));
 +        assert!(page.contains("Content-Security-Policy:"));
 +        assert!(page.contains("<title>pyblockMiner Status</title>"));
 +
-+        let missing = String::from_utf8(dashboard_http_response("GET", "/missing", &stats)).expect("response should be UTF-8");
++        let missing = String::from_utf8(dashboard_http_response("GET", "/missing", &stats, "Miner 1", &[])).expect("response should be UTF-8");
 +        assert!(missing.starts_with("HTTP/1.1 404 Not Found"));
 +
-+        let write = String::from_utf8(dashboard_http_response("POST", "/api/status", &stats)).expect("response should be UTF-8");
++        let write = String::from_utf8(dashboard_http_response("POST", "/api/status", &stats, "Miner 1", &[])).expect("response should be UTF-8");
 +        assert!(write.starts_with("HTTP/1.1 405 Method Not Allowed"));
 +    }
 +}
@@ -260,7 +310,7 @@ index 0d2f5ae..679f16a 100644
  fn cpu_grind(prevhash_hex: &str, ntime_hex: &str, work_root_hex: &str, bits: u32, threads: usize, nstart: u64, span: u64) -> Vec<String> {
      let prevhash = hex::decode(prevhash_hex).unwrap_or_default();
      let mut ntime8 = hex::decode(ntime_hex).unwrap_or_default(); ntime8.resize(8, 0);
-@@ -686,7 +907,10 @@ fn engine(stats: Arc<Mutex<Stats>>, tgt: Arc<Mutex<Target>>, ngpu: u32, cpu_thre
+@@ -686,7 +957,10 @@ fn engine(stats: Arc<Mutex<Stats>>, tgt: Arc<Mutex<Target>>, ngpu: u32, cpu_thre
                  st.hr_total = st.gpu_ghs.iter().sum();
                  let hv = (st.hr_total * 100.0) as u64;
                  st.hr_hist.push_back(hv);
@@ -271,18 +321,66 @@ index 0d2f5ae..679f16a 100644
              }
              user.pump(&stats);
              if let Some(d) = dev.as_mut() { d.pump(&stats); }
-@@ -1257,6 +1481,7 @@ fn main() {
+@@ -1257,6 +1531,10 @@ fn main() {
      let mut cfg = load_config();
      let mut headless = false;
      let mut genaddr_net: Option<String> = None;
 +    let mut requested_cpu_threads: Option<usize> = None;
++    let mut dashboard_port: u16 = DASHBOARD_PORT;
++    let mut miner_name = "Miner 1".to_string();
++    let mut dashboard_peers: Vec<DashboardPeer> = Vec::new();
      // CLI overrides (optional; config is the source of truth otherwise)
      let mut i = 1;
      while i < args.len() {
-@@ -1266,9 +1491,25 @@ fn main() {
+@@ -1266,9 +1544,73 @@ fn main() {
              "--pool" => { i += 1; if i < args.len() { if let Some(s) = cfg.stratums.get_mut(cfg.selected) { s.url = args[i].clone(); } } }
              "--gpus" => { i += 1; if i < args.len() { cfg.gpus = args[i].parse().ok(); } }
              "--cpu" => { cfg.cpu = true; }
++            "--dashboard-port" => {
++                i += 1;
++                dashboard_port = match args.get(i).and_then(|value| value.parse::<u16>().ok()) {
++                    Some(value) if value >= 1 => value,
++                    _ => {
++                        eprintln!("--dashboard-port requires an integer greater than or equal to 1");
++                        std::process::exit(2);
++                    }
++                };
++            }
++            "--miner-name" => {
++                i += 1;
++                miner_name = match args.get(i) {
++                    Some(value) if !value.trim().is_empty() => value.clone(),
++                    _ => {
++                        eprintln!("--miner-name requires a non-empty value");
++                        std::process::exit(2);
++                    }
++                };
++            }
++            "--dashboard-peer" => {
++                i += 1;
++                let entry = match args.get(i) {
++                    Some(value) => value,
++                    None => {
++                        eprintln!("--dashboard-peer requires name=port");
++                        std::process::exit(2);
++                    }
++                };
++                let (name, port) = match entry.rsplit_once('=') {
++                    Some((name, port)) if !name.trim().is_empty() => (name.trim().to_string(), port),
++                    _ => {
++                        eprintln!("--dashboard-peer requires name=port");
++                        std::process::exit(2);
++                    }
++                };
++                let port = match port.parse::<u16>() {
++                    Ok(value) if value >= 1 => value,
++                    _ => {
++                        eprintln!("--dashboard-peer requires name=port");
++                        std::process::exit(2);
++                    }
++                };
++                dashboard_peers.push(DashboardPeer { name, port });
++            }
 +            "--cpu-threads" => {
 +                i += 1;
 +                requested_cpu_threads = match args.get(i).and_then(|value| value.parse::<usize>().ok()) {
@@ -298,14 +396,17 @@ index 0d2f5ae..679f16a 100644
              "--version" | "-V" => { println!("pyblockMiner {}", VERSION); return; }
 +            "--help" | "-h" => {
 +                println!("pyblockMiner {}", VERSION);
-+                println!("Usage: pyblockMiner [--headless] [--cpu] [--cpu-threads <N>] [--network <NET>] [--addr <ADDRESS>] [--pool <HOST:PORT>] [--donate <PERCENT>]");
++                println!("Usage: pyblockMiner [--headless] [--cpu] [--cpu-threads <N>] [--network <NET>] [--addr <ADDRESS>] [--pool <HOST:PORT>] [--donate <PERCENT>] [--dashboard-port <PORT>] [--miner-name <NAME>] [--dashboard-peer <NAME=PORT>]");
 +                println!("  --cpu-threads <N>  CPU worker threads, clamped to available parallelism");
++                println!("  --dashboard-port <PORT>  Dashboard port for this miner");
++                println!("  --miner-name <NAME>  Display name for this miner");
++                println!("  --dashboard-peer <NAME=PORT>  Additional miner dashboard to aggregate");
 +                return;
 +            }
              "--headless" | "--daemon" | "--no-tui" => { headless = true; }
              _ => {}
          }
-@@ -1306,7 +1547,17 @@ fn main() {
+@@ -1306,7 +1648,17 @@ fn main() {
      let ngpu = if app.cfg.cpu { 0 } else { app.cfg.gpus.unwrap_or(if detected > 0 { detected } else { 1 }) };
      let mut use_cpu = app.cfg.cpu;
      if ngpu == 0 { use_cpu = true; }
@@ -324,21 +425,21 @@ index 0d2f5ae..679f16a 100644
 
      // shared state
      let stats = Arc::new(Mutex::new(Stats::default()));
-@@ -1343,8 +1594,11 @@ fn main() {
+@@ -1343,8 +1695,11 @@ fn main() {
 
      // headless (service) mode: no TUI, heartbeat to stdout (journald). Engine + pollers already running.
      if headless {
 -        println!("pyblockMiner (headless) · network={} · pool={} · addr={} · donate={:.1}%",
 -            app.network(), tgt.lock().unwrap().pool, app.addr(), donate0);
 +        if std::env::var_os("PYBLOCK_DASHBOARD_DISABLED").is_none() {
-+            spawn_dashboard(stats.clone());
++            spawn_dashboard(stats.clone(), dashboard_port, miner_name.clone(), dashboard_peers.clone());
 +        }
 +        println!("pyblockMiner (headless) · network={} · pool={} · addr={} · donate={:.1}% · cpu_threads={}",
 +            app.network(), tgt.lock().unwrap().pool, app.addr(), donate0, cpu_threads);
          let _ = std::io::stdout().flush();
          let mut last_printed = 0usize;
          loop {
-@@ -1357,8 +1611,8 @@ fn main() {
+@@ -1357,8 +1712,8 @@ fn main() {
                  (st.network.clone(), st.connected, st.hr_total, st.gpu_ghs.len(), st.blocks, st.accepted, st.rejected, st.net_height, st.best_diff, fresh)
              };
              for l in &newlogs { println!("  · {}", l); }
@@ -351,10 +452,10 @@ index 0d2f5ae..679f16a 100644
      }
 diff --git a/tests/cli.rs b/tests/cli.rs
 new file mode 100644
-index 0000000..a357011
+index 0000000..e8a9461
 --- /dev/null
 +++ b/tests/cli.rs
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,78 @@
 +use std::io::{BufRead, BufReader};
 +use std::process::{Command, Output, Stdio};
 +
@@ -407,7 +508,11 @@ index 0000000..a357011
 +fn help_lists_cpu_threads() {
 +    let result = output(&["--help"]);
 +    assert!(result.status.success());
-+    assert!(String::from_utf8_lossy(&result.stdout).contains("--cpu-threads <N>"));
++    let stdout = String::from_utf8_lossy(&result.stdout);
++    assert!(stdout.contains("--cpu-threads <N>"));
++    assert!(stdout.contains("--dashboard-port <PORT>"));
++    assert!(stdout.contains("--miner-name <NAME>"));
++    assert!(stdout.contains("--dashboard-peer <NAME=PORT>"));
 +}
 +
 +#[test]

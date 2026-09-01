@@ -12,11 +12,6 @@ const elements = Object.fromEntries(
     "best-share",
     "blocks",
     "pool-height",
-    "difficulty",
-    "pool-miners",
-    "pool-hashrate",
-    "address",
-    "workers",
     "events",
     "updated",
     "chart-line",
@@ -27,12 +22,24 @@ const elements = Object.fromEntries(
     "chart-guide",
     "chart-point",
     "chart-tooltip",
+    "miners",
   ].map((id) => [id, document.getElementById(id)]),
 )
+
+const chartPanel = document.querySelector(".chart-panel")
+const eventsPanel = document.querySelector(".events-panel")
 
 let chartValues = []
 let chartPoints = []
 let selectedChartIndex = -1
+
+const poolNames = {
+  "pool.pyblock.xyz:4445": "Lotto",
+  "pool.pyblock.xyz:5574": "Chirp",
+  "pool.pyblock.xyz:30110": "Carousel",
+  "pool.pyblock.xyz:23111": "Testnet4",
+  "pool.pyblock.xyz:23110": "Regtest",
+}
 
 function formatHashrate(hashesPerSecond) {
   const value = Math.max(0, Number(hashesPerSecond) || 0)
@@ -41,6 +48,17 @@ function formatHashrate(hashesPerSecond) {
   if (value >= 1e3) return `${(value / 1e3).toFixed(2)} kH/s`
   if (value > 0) return `${value.toFixed(2)} H/s`
   return "0 H/s"
+}
+
+function formatPool(pool) {
+  const endpoint = String(pool || "").trim()
+  if (!endpoint) return "Unavailable"
+  const normalized = endpoint
+    .replace(/^stratum\+tcp:\/\//i, "")
+    .replace(/\/$/, "")
+    .toLowerCase()
+  const name = poolNames[normalized]
+  return name ? `${name} · ${endpoint}` : endpoint
 }
 
 function formatDuration(seconds) {
@@ -57,8 +75,43 @@ function formatDuration(seconds) {
 }
 
 function formatNumber(value, fallback = "Unavailable") {
+  if (value === null || value === undefined || value === "") return fallback
   const number = Number(value)
   return Number.isFinite(number) ? number.toLocaleString() : fallback
+}
+
+function formatWorkerDetail(workers, workerCount) {
+  const names = Array.isArray(workers)
+    ? workers.map((worker) => worker?.name).filter(Boolean)
+    : []
+  const cpu = names.length === 1 ? names[0].match(/^CPU \((\d+) threads?\)$/i) : null
+  if (cpu) return { label: "CPU threads", value: cpu[1], title: names[0] }
+  if (names.length) {
+    return { label: "Workers", value: names.join(", "), title: names.join(", ") }
+  }
+  return { label: "Workers", value: formatNumber(workerCount), title: "" }
+}
+
+function syncEventsHeight() {
+  if (!chartPanel || !eventsPanel) return
+  const height = Math.ceil(chartPanel.getBoundingClientRect().height)
+  if (height > 0) {
+    eventsPanel.style.height = `${height}px`
+  }
+}
+
+function createMinerDetail(label, value, title) {
+  const row = document.createElement("div")
+  row.className = "miner-detail"
+  const key = document.createElement("span")
+  key.className = "miner-detail-label"
+  key.textContent = label
+  const content = document.createElement("span")
+  content.className = "miner-detail-value"
+  content.textContent = value
+  if (title) content.title = title
+  row.append(key, content)
+  return row
 }
 
 function drawChart(samples) {
@@ -160,27 +213,6 @@ elements["hashrate-chart"].addEventListener("keydown", (event) => {
   else showChartSample(Math.min(chartValues.length - 1, selectedChartIndex + 1))
 })
 
-function renderWorkers(workers) {
-  elements.workers.replaceChildren()
-  if (!Array.isArray(workers) || workers.length === 0) {
-    const empty = document.createElement("p")
-    empty.className = "metric-detail"
-    empty.textContent = "Workers are starting"
-    elements.workers.append(empty)
-    return
-  }
-  for (const worker of workers) {
-    const row = document.createElement("div")
-    row.className = "worker"
-    const name = document.createElement("span")
-    name.textContent = worker.name
-    const rate = document.createElement("span")
-    rate.textContent = formatHashrate(worker.hashrateHps)
-    row.append(name, rate)
-    elements.workers.append(row)
-  }
-}
-
 function renderEvents(events) {
   elements.events.replaceChildren()
   const values = Array.isArray(events) && events.length ? events : ["No events yet"]
@@ -191,7 +223,177 @@ function renderEvents(events) {
   }
 }
 
-function render(status) {
+function createMinerCard(miner, isPrimary, showSessionResults) {
+  const card = document.createElement("article")
+  card.className = "miner-card"
+  const header = document.createElement("header")
+  const name = document.createElement("div")
+  name.className = "miner-name"
+  name.textContent = isPrimary ? `${miner.minerName} (primary)` : miner.minerName
+  const state = document.createElement("div")
+  state.className = "miner-state"
+  state.textContent = miner.stateLabel || "Unavailable"
+  const rate = document.createElement("div")
+  rate.className = "miner-rate"
+  rate.textContent = miner.hashrate || "0 H/s"
+  const meta = document.createElement("div")
+  meta.className = "miner-meta"
+  const worker = formatWorkerDetail(miner.workers, miner.workerCount)
+  const details = [
+    createMinerDetail("Pool", formatPool(miner.pool), miner.pool || ""),
+    createMinerDetail(
+      "Payout",
+      miner.payoutAddress || "Unavailable",
+      miner.payoutAddress || "",
+    ),
+    createMinerDetail(
+      "Pool difficulty",
+      miner.currentDifficulty || "Unavailable",
+    ),
+    createMinerDetail(worker.label, worker.value, worker.title),
+    createMinerDetail("Network", miner.network || "Unknown"),
+  ]
+  if (showSessionResults) {
+    details.push(
+      createMinerDetail("Accepted shares", formatNumber(miner.accepted)),
+      createMinerDetail("Rejected shares", formatNumber(miner.rejected)),
+      createMinerDetail("Best diff", miner.bestShare || "Unavailable"),
+    )
+  }
+  meta.append(...details)
+  header.append(name, state)
+  card.append(header, rate, meta)
+  return card
+}
+
+function aggregateFleet(fleet) {
+  const peers = Array.isArray(fleet?.peers) ? fleet.peers : []
+  const configuredMiners = [
+    { name: fleet?.primary?.minerName || "Miner 1", status: fleet?.primary },
+    ...peers,
+  ]
+  const statuses = configuredMiners.map((miner) => miner?.status).filter(Boolean)
+  if (!statuses.length) {
+    return null
+  }
+  const totalHashrate = statuses.reduce(
+    (sum, item) => sum + Number(item.hashrateHps || 0),
+    0,
+  )
+  const totalAccepted = statuses.reduce(
+    (sum, item) => sum + Number(item.accepted || 0),
+    0,
+  )
+  const totalRejected = statuses.reduce(
+    (sum, item) => sum + Number(item.rejected || 0),
+    0,
+  )
+  const totalBlocks = statuses.reduce(
+    (sum, item) => sum + Number(item.blocks || 0),
+    0,
+  )
+  const bestShare = statuses.reduce(
+    (best, item) =>
+      Number(item.bestShareValue || 0) > Number(best?.bestShareValue || 0)
+        ? item
+        : best,
+    statuses[0],
+  )
+  const activeStatuses = statuses.filter((item) => item.connected)
+  const workerCount = statuses.reduce(
+    (sum, item) => sum + Number(item.workerCount || 0),
+    0,
+  )
+  const uniqueNetworks = [...new Set(statuses.map((item) => item.network).filter(Boolean))]
+  const uniquePools = [...new Set(statuses.map((item) => item.pool).filter(Boolean))]
+  const history = []
+  const maxHistory = Math.max(
+    ...statuses.map((item) =>
+      Array.isArray(item.hashrateHistoryHps) ? item.hashrateHistoryHps.length : 0,
+    ),
+    0,
+  )
+  for (let index = 0; index < maxHistory; index += 1) {
+    let sum = 0
+    let seen = false
+    for (const status of statuses) {
+      const historyValues = Array.isArray(status.hashrateHistoryHps)
+        ? status.hashrateHistoryHps
+        : []
+      const sample = historyValues[historyValues.length - maxHistory + index]
+      if (Number.isFinite(sample)) {
+        sum += Number(sample)
+        seen = true
+      }
+    }
+    if (seen) history.push(sum)
+  }
+  const eventLines = []
+  for (const status of statuses) {
+    for (const event of Array.isArray(status.events) ? status.events : []) {
+      eventLines.push(`[${status.minerName}] ${event}`)
+    }
+  }
+  return {
+    state: activeStatuses.length ? (activeStatuses.some((item) => item.state === "mining") ? "mining" : "connected") : "waiting",
+    stateLabel:
+      activeStatuses.length === statuses.length
+        ? "Mining"
+        : activeStatuses.length
+          ? "Partially online"
+          : "Waiting for pool",
+    hashrate: formatHashrate(totalHashrate),
+    workerCount,
+    uptimeSeconds: Math.max(
+      0,
+      ...statuses.map((item) => Number(item.uptimeSeconds || 0)),
+    ),
+    network:
+      uniqueNetworks.length === 1
+        ? uniqueNetworks[0]
+        : uniqueNetworks.length > 1
+          ? "Mixed"
+          : "Unknown",
+    pool:
+      uniquePools.length === 1
+        ? uniquePools[0]
+        : uniquePools.length > 1
+          ? `${uniquePools.length} pools`
+          : "Waiting for configuration",
+    accepted: totalAccepted,
+    rejected: totalRejected,
+    rejectionRate:
+      totalAccepted + totalRejected > 0
+        ? (totalRejected / (totalAccepted + totalRejected)) * 100
+        : 0,
+    bestShare: bestShare?.bestShare || "0.00",
+    blocks: totalBlocks,
+    poolHeight: statuses.find((item) => item.poolHeight != null)?.poolHeight,
+    events: eventLines,
+    hashrateHistoryHps: history,
+    miners: configuredMiners.map((item, index) => ({
+      minerName: item?.status?.minerName || item?.name || `Miner ${index + 1}`,
+      stateLabel: item?.status?.stateLabel || (item?.status ? "Online" : "Unavailable"),
+      hashrate: item?.status?.hashrate || "0 H/s",
+      pool: item?.status?.pool || "Unavailable",
+      payoutAddress: item?.status?.payoutAddress || "Unavailable",
+      currentDifficulty: item?.status?.currentDifficulty || "Unavailable",
+      workers: item?.status?.workers,
+      workerCount: item?.status?.workerCount,
+      network: item?.status?.network || "Unknown",
+      accepted: item?.status?.accepted,
+      rejected: item?.status?.rejected,
+      bestShare: item?.status?.bestShare,
+    })),
+  }
+}
+
+function render(fleet) {
+  const status = aggregateFleet(fleet)
+  if (!status) {
+    renderFailure()
+    return
+  }
   document.body.dataset.state = status.state
   elements["state-label"].textContent = status.stateLabel
   elements.hashrate.textContent = status.hashrate
@@ -200,26 +402,24 @@ function render(status) {
   }`
   elements.uptime.textContent = formatDuration(status.uptimeSeconds)
   elements.network.textContent = status.network || "Unknown"
-  elements.pool.textContent = status.pool || "Waiting for configuration"
+  elements.pool.textContent = formatPool(status.pool || "Waiting for configuration")
   elements.pool.title = status.pool || ""
+  elements["pool-height"].textContent = status.poolHeight
+    ? formatNumber(status.poolHeight)
+    : "Unavailable"
   elements.accepted.textContent = formatNumber(status.accepted, "0")
   elements.rejected.textContent = formatNumber(status.rejected, "0")
   elements["rejection-rate"].textContent = `${Number(status.rejectionRate || 0).toFixed(1)}% rejection rate`
   elements["best-share"].textContent = status.bestShare
   elements.blocks.textContent = formatNumber(status.blocks, "0")
-  elements["pool-height"].textContent = status.poolHeight
-    ? formatNumber(status.poolHeight)
-    : "Unavailable"
-  elements.difficulty.textContent = status.currentDifficulty
-  elements["pool-miners"].textContent = status.poolMiners
-    ? formatNumber(status.poolMiners)
-    : "Unavailable"
-  elements["pool-hashrate"].textContent = status.poolHashrate
-  elements.address.textContent = status.payoutAddress || "Unavailable"
-  elements.address.title = status.payoutAddress || ""
-  renderWorkers(status.workers)
   renderEvents(status.events)
   drawChart(status.hashrateHistoryHps)
+  elements.miners.replaceChildren()
+  for (const [index, miner] of status.miners.entries()) {
+    elements.miners.append(
+      createMinerCard(miner, index === 0, status.miners.length > 1),
+    )
+  }
   elements.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`
 }
 
@@ -229,13 +429,29 @@ function renderFailure() {
   elements.updated.textContent = "Update failed, retrying"
 }
 
+if (chartPanel && eventsPanel) {
+  const observer = new ResizeObserver(() => {
+    syncEventsHeight()
+  })
+  observer.observe(chartPanel)
+  window.addEventListener("resize", syncEventsHeight)
+  window.addEventListener("load", syncEventsHeight)
+  queueMicrotask(syncEventsHeight)
+}
+
 async function refresh() {
   try {
-    const response = await fetch("/api/status", { cache: "no-store" })
+    const response = await fetch("/api/miners", { cache: "no-store" })
     if (!response.ok) throw new Error(`Status request failed: ${response.status}`)
     render(await response.json())
   } catch {
-    renderFailure()
+    try {
+      const response = await fetch("/api/status", { cache: "no-store" })
+      if (!response.ok) throw new Error(`Status request failed: ${response.status}`)
+      render({ primary: await response.json(), peers: [] })
+    } catch {
+      renderFailure()
+    }
   }
 }
 

@@ -179,6 +179,20 @@ main {
   white-space: nowrap;
 }
 
+.hero-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.hero-stat-value {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -223,6 +237,81 @@ main {
 
 .panel {
   padding: 22px;
+}
+
+.miners-panel {
+  margin-top: 12px;
+}
+
+.miners {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.miner-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.miner-card header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.miner-name {
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.miner-state {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+.miner-rate {
+  color: var(--green);
+  font-size: 1.7rem;
+  font-weight: 720;
+  letter-spacing: -0.05em;
+}
+
+.miner-meta {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+}
+
+.miner-detail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.miner-detail-label {
+  color: var(--muted);
+}
+
+.miner-detail-value {
+  overflow: hidden;
+  color: var(--text);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chart-panel {
@@ -323,67 +412,40 @@ main {
 
 .lower-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
   gap: 12px;
   margin-top: 12px;
+  align-items: stretch;
 }
 
-.details {
-  margin: 20px 0 0;
+.lower-grid .chart-panel,
+.lower-grid .events-panel {
+  margin-top: 0;
 }
 
-.details > div {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
-  gap: 16px;
-  padding-block: 11px;
-  border-bottom: 1px solid var(--border);
-}
-
-.details dt {
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.details dd {
-  margin: 0;
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workers {
-  display: grid;
-  gap: 8px;
-  margin-top: 18px;
-}
-
-.worker {
+.chart-panel,
+.events-panel {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 11px 12px;
-  border-radius: 9px;
-  background: var(--surface-raised);
-  font-size: 0.79rem;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.worker span:last-child {
-  color: var(--green);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+.chart-panel {
+  height: 100%;
+}
+
+.events-panel {
+  overflow: hidden;
 }
 
 .events {
+  flex: 1;
   display: grid;
   gap: 1px;
-  max-height: 330px;
   margin: 20px 0 0;
   padding: 0;
   overflow: auto;
+  min-height: 0;
   list-style: none;
 }
 
@@ -418,8 +480,17 @@ footer {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .miners {
+    grid-template-columns: 1fr;
+  }
+
   .lower-grid {
     grid-template-columns: 1fr;
+  }
+
+  .lower-grid .chart-panel,
+  .lower-grid .events-panel {
+    margin-top: 0;
   }
 }
 
