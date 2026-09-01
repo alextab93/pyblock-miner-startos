@@ -1,0 +1,30 @@
+{
+  "name": "pyblock-miner-startos",
+  "scripts": {
+    "build": "rm -rf ./javascript && ncc build startos/index.ts -o ./javascript",
+    "prettier": "prettier --write startos",
+    "format:check": "prettier --check startos",
+    "test": "tsx --test startos/**/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@start9labs/start-sdk": "2.0.9",
+    "bitcoinjs-lib": "7.0.1"
+  },
+  "overrides": {
+    "@start9labs/start-sdk": "$@start9labs/start-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@vercel/ncc": "^0.38.4",
+    "prettier": "^3.6.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "prettier": {
+    "trailingComma": "all",
+    "tabWidth": 2,
+    "semi": false,
+    "singleQuote": true
+  }
+}

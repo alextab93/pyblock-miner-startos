@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+pid_file=/run/pyblock-miner.pid
+ready_file=/run/pyblock-miner.ready
+
+test -r "$pid_file"
+test -f "$ready_file"
+miner_pid=$(cat "$pid_file")
+kill -0 "$miner_pid"

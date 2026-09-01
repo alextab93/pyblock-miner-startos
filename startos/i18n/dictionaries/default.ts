@@ -1,0 +1,48 @@
+export const DEFAULT_LANG = 'en_US'
+
+const dict = {
+  Network: 0,
+  'The network must match both the payout address and the selected Stratum pool.': 1,
+  Mainnet: 2,
+  Testnet4: 3,
+  Regtest: 4,
+  'Payout Address': 5,
+  'A Bitcoin address you control for the selected network. This package never stores its private key.': 6,
+  Pool: 7,
+  'Choose a preset compatible with the selected network or provide a custom raw host and port.': 8,
+  'PyBLOCK LOTTO': 9,
+  'PyBLOCK CHIRP': 10,
+  'PyBLOCK CAROUSEL': 11,
+  'PyBLOCK testnet4': 12,
+  'PyBLOCK regtest': 13,
+  Custom: 14,
+  'Custom Stratum': 15,
+  'Required only when Custom is selected. Enter hostname:port without a URL scheme.': 16,
+  'CPU Workers': 17,
+  'Number of CPU mining threads. Values above visible CPUs are clamped by the miner.': 18,
+  'Donation (%)': 19,
+  'Upstream pyblockMiner donates this percentage of mainnet hashrate through a separate PyBLOCK Stratum session. It is not a StartOS fee.': 20,
+  'Payout address is invalid for the selected network.': 21,
+  'The selected pool does not support the selected network.': 22,
+  'Custom Stratum must be a valid hostname:port with a port from 1 to 65535.': 23,
+  'CPU workers must be an integer from 1 to 256.': 24,
+  'Donation must be between 2 and 100 percent.': 25,
+  'Configure Miner': 26,
+  'Configure the mining network, payout address, Stratum pool, CPU workers, and upstream donation.': 27,
+  'BLAKE2b is not active on Bitcoin mainnet. Testnet and regtest coins have no monetary value. Verify upstream network status before mining.': 28,
+  'Configuration Saved': 29,
+  'The miner configuration was saved. A running service restarts automatically to apply it.': 30,
+  'Set a payout address, network, pool, and CPU worker count before mining can start.': 31,
+  'Configure pyblockMiner before starting it.': 32,
+  'Mining Process': 33,
+  'The miner process is running.': 34,
+  'The miner process is not ready. Check the service logs.': 35,
+  'Mining Dashboard': 36,
+  'View live hashrate, workers, shares, pool status, and recent mining events.': 37,
+  'The mining dashboard is ready.': 38,
+  'The mining dashboard is not ready.': 39,
+} as const
+
+export type I18nKey = keyof typeof dict
+export type LangDict = Record<(typeof dict)[I18nKey], string>
+export default dict
