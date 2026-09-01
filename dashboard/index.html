@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>pyblockMiner Status</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body data-state="waiting">
+    <header class="site-header">
+      <div class="brand">
+        <img src="/icon.svg" alt="" width="44" height="44" />
+        <div>
+          <p class="eyebrow">STARTOS MINING SERVICE</p>
+          <h1>pyblockMiner</h1>
+        </div>
+      </div>
+      <div class="connection" aria-live="polite">
+        <span class="connection-dot" aria-hidden="true"></span>
+        <span id="state-label">Loading</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hashrate-label">
+        <div>
+          <p class="eyebrow" id="hashrate-label">CURRENT HASHRATE</p>
+          <p class="hashrate" id="hashrate">0 H/s</p>
+          <p class="hero-detail">
+            <span id="worker-summary">0 workers</span>
+            <span aria-hidden="true">&middot;</span>
+            <span id="uptime">Session not started</span>
+          </p>
+        </div>
+        <div class="hero-side">
+          <p class="label">Network</p>
+          <p class="network" id="network">Unknown</p>
+          <p class="pool" id="pool">Waiting for configuration</p>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Mining results">
+        <article class="metric accepted">
+          <p class="label">Accepted</p>
+          <p class="metric-value" id="accepted">0</p>
+          <p class="metric-detail">shares this session</p>
+        </article>
+        <article class="metric">
+          <p class="label">Rejected</p>
+          <p class="metric-value" id="rejected">0</p>
+          <p class="metric-detail" id="rejection-rate">0% rejection rate</p>
+        </article>
+        <article class="metric">
+          <p class="label">Best share</p>
+          <p class="metric-value compact" id="best-share">0.00</p>
+          <p class="metric-detail">difficulty</p>
+        </article>
+        <article class="metric">
+          <p class="label">Blocks found</p>
+          <p class="metric-value" id="blocks">0</p>
+          <p class="metric-detail">this session</p>
+        </article>
+      </section>
+
+      <section class="panel chart-panel" aria-labelledby="chart-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SESSION</p>
+            <h2 id="chart-title">Hashrate history</h2>
+          </div>
+          <p class="chart-range">Recent samples</p>
+        </div>
+        <div class="chart-plot">
+          <svg
+            id="hashrate-chart"
+            class="chart"
+            viewBox="0 0 800 180"
+            preserveAspectRatio="none"
+            role="img"
+            tabindex="0"
+            aria-labelledby="chart-title chart-description"
+          >
+            <desc id="chart-description">
+              Recent session hashrate samples. Hover or use the arrow keys to
+              inspect exact values.
+            </desc>
+            <defs>
+              <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#00f33d" stop-opacity="0.34" />
+                <stop offset="1" stop-color="#00f33d" stop-opacity="0" />
+              </linearGradient>
+            </defs>
+            <path class="chart-grid" d="M0 45H800 M0 90H800 M0 135H800" />
+            <path id="chart-area" class="chart-area" d="M0 180H800Z" />
+            <polyline id="chart-line" class="chart-line" points="" />
+            <line
+              id="chart-guide"
+              class="chart-guide"
+              y1="20"
+              y2="170"
+              hidden
+            />
+            <circle id="chart-point" class="chart-point" r="5" hidden />
+            <rect class="chart-hit-area" width="800" height="180" />
+          </svg>
+          <div
+            id="chart-tooltip"
+            class="chart-tooltip"
+            role="status"
+            hidden
+          ></div>
+        </div>
+        <div class="chart-footer">
+          <span id="chart-min">Min 0 H/s</span>
+          <span id="chart-max">Peak 0 H/s</span>
+        </div>
+      </section>
+
+      <div class="lower-grid">
+        <section class="panel" aria-labelledby="details-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">CURRENT WORK</p>
+              <h2 id="details-title">Miner details</h2>
+            </div>
+          </div>
+          <dl class="details">
+            <div><dt>Pool height</dt><dd id="pool-height">Unavailable</dd></div>
+            <div><dt>Pool difficulty</dt><dd id="difficulty">Unavailable</dd></div>
+            <div><dt>Pool miners</dt><dd id="pool-miners">Unavailable</dd></div>
+            <div><dt>Pool hashrate</dt><dd id="pool-hashrate">Unavailable</dd></div>
+            <div><dt>Payout address</dt><dd id="address">Unavailable</dd></div>
+          </dl>
+          <div class="workers" id="workers"></div>
+        </section>
+
+        <section class="panel events-panel" aria-labelledby="events-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LIVE</p>
+              <h2 id="events-title">Recent events</h2>
+            </div>
+          </div>
+          <ol class="events" id="events" aria-live="polite">
+            <li>Waiting for miner status</li>
+          </ol>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <span>Read-only session data</span>
+      <span id="updated">Not updated yet</span>
+    </footer>
+  </body>
+</html>

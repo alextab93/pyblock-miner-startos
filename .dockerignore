@@ -1,0 +1,11 @@
+.ai-workspace/
+.git
+**/.git
+.github
+.patch-work
+*.s9pk
+docker-images
+javascript
+ncc-cache
+node_modules
+upstream-project/target

@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+pid_file=/run/pyblock-miner.pid
+ready_file=/run/pyblock-miner.ready
+
+cleanup() {
+  rm -f "$pid_file" "$ready_file"
+}
+
+terminate() {
+  kill -TERM "$miner_pid" 2>/dev/null || true
+  wait "$miner_pid" 2>/dev/null || true
+  cleanup
+  exit 0
+}
+
+cleanup
+/usr/bin/nice -n 10 /usr/local/bin/pyblockMiner "$@" &
+miner_pid=$!
+printf '%s\n' "$miner_pid" > "$pid_file"
+trap terminate TERM INT
+
+for attempt in 1 2 3 4 5; do
+  if ! kill -0 "$miner_pid" 2>/dev/null; then
+    wait "$miner_pid"
+    status=$?
+    cleanup
+    exit "$status"
+  fi
+  sleep 1
+done
+
+: > "$ready_file"
+set +e
+wait "$miner_pid"
+status=$?
+set -e
+cleanup
+exit "$status"

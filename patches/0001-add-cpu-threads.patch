@@ -1,0 +1,431 @@
+diff --git a/src/main.rs b/src/main.rs
+index 0d2f5ae..679f16a 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -5,7 +5,7 @@
+ // You mine to YOUR address → keep 99.1% of every block · PyBLØCK pool fee 0.9%. Non-custodial.
+ use std::collections::{HashMap, VecDeque};
+ use std::io::{BufRead, BufReader, Read, Write};
+-use std::net::TcpStream;
++use std::net::{TcpListener, TcpStream};
+ use std::path::{Path, PathBuf};
+ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+ use std::sync::{Arc, Mutex};
+@@ -23,6 +23,11 @@ const DONATE_POOL: &str = "pool.pyblock.xyz:4445";
+ const DEV_DONATION_ADDR: &str = "1PyBLoCKdiaC46vD9CWcmxa3ey2VzSc5Q2";
+ const DONATE_MIN: f64 = 2.0;
+ const VERSION: &str = env!("CARGO_PKG_VERSION");   // from Cargo.toml — shown in TUI footer, --version, and the stratum UA
++const DASHBOARD_PORT: u16 = 8080;
++const DASHBOARD_HTML: &[u8] = include_bytes!("../dashboard/index.html");
++const DASHBOARD_CSS: &[u8] = include_bytes!("../dashboard/app.css");
++const DASHBOARD_JS: &[u8] = include_bytes!("../dashboard/app.js");
++const DASHBOARD_ICON: &[u8] = include_bytes!("../dashboard/icon.svg");
+
+ // PyBLØCK palette
+ const GRN: Color = Color::Rgb(0, 255, 65);
+@@ -208,6 +213,7 @@ struct Stats {
+     rejected: u64,
+     hr_total: f64,
+     hr_hist: VecDeque<u64>,
++    dashboard_hist: VecDeque<f64>,
+     log: VecDeque<String>,
+     started: Option<Instant>,
+     net_ok: bool,
+@@ -234,6 +240,144 @@ impl Stats {
+     }
+ }
+
++#[derive(Serialize)]
++#[serde(rename_all = "camelCase")]
++struct DashboardWorker {
++    name: String,
++    hashrate_hps: f64,
++}
++
++#[derive(Serialize)]
++#[serde(rename_all = "camelCase")]
++struct DashboardStatus {
++    state: String,
++    state_label: String,
++    connected: bool,
++    network: String,
++    pool: String,
++    payout_address: String,
++    hashrate: String,
++    hashrate_hps: f64,
++    worker_count: usize,
++    workers: Vec<DashboardWorker>,
++    uptime_seconds: u64,
++    accepted: u64,
++    rejected: u64,
++    rejection_rate: f64,
++    blocks: u64,
++    best_share: String,
++    current_difficulty: String,
++    pool_height: Option<u64>,
++    pool_miners: Option<u64>,
++    pool_hashrate: String,
++    hashrate_history_hps: Vec<f64>,
++    events: Vec<String>,
++}
++
++fn dashboard_status(st: &Stats) -> DashboardStatus {
++    let (state, state_label) = if st.paused {
++        ("paused", "Paused")
++    } else if st.connected && st.hr_total > 0.0 {
++        ("mining", "Mining")
++    } else if st.connected {
++        ("connected", "Connected")
++    } else {
++        ("waiting", "Waiting for pool")
++    };
++    let total_shares = st.accepted + st.rejected;
++    let rejection_rate = if total_shares > 0 {
++        st.rejected as f64 / total_shares as f64 * 100.0
++    } else {
++        0.0
++    };
++    let workers = st.gpu_names.iter().enumerate().map(|(index, name)| DashboardWorker {
++        name: name.clone(),
++        hashrate_hps: st.gpu_ghs.get(index).copied().unwrap_or(0.0) * 1e9,
++    }).collect();
++    DashboardStatus {
++        state: state.into(),
++        state_label: state_label.into(),
++        connected: st.connected,
++        network: st.network.clone(),
++        pool: st.endpoint.clone(),
++        payout_address: st.addr.clone(),
++        hashrate: fmt_hashrate(st.hr_total),
++        hashrate_hps: st.hr_total * 1e9,
++        worker_count: st.gpu_names.len(),
++        workers,
++        uptime_seconds: st.started.map(|started| started.elapsed().as_secs()).unwrap_or(0),
++        accepted: st.accepted,
++        rejected: st.rejected,
++        rejection_rate,
++        blocks: st.blocks,
++        best_share: fmt_diff(st.best_diff),
++        current_difficulty: if st.diff > 0.0 { fmt_diff(st.diff) } else { "Unavailable".into() },
++        pool_height: if st.net_ok && st.net_height > 0 { Some(st.net_height) } else { None },
++        pool_miners: if st.net_ok { Some(st.net_miners) } else { None },
++        pool_hashrate: if st.net_ok { fmt_hashrate(st.net_ghs) } else { "Unavailable".into() },
++        hashrate_history_hps: st.dashboard_hist.iter().map(|value| value * 1e9).collect(),
++        events: st.log.iter().rev().take(10).cloned().collect(),
++    }
++}
++
++fn dashboard_http_response(method: &str, request_path: &str, st: &Stats) -> Vec<u8> {
++    let path = request_path.split('?').next().unwrap_or(request_path);
++    let (status, content_type, body) = if method != "GET" && method != "HEAD" {
++        ("405 Method Not Allowed", "text/plain; charset=utf-8", b"Method not allowed".to_vec())
++    } else {
++        match path {
++            "/" | "/index.html" => ("200 OK", "text/html; charset=utf-8", DASHBOARD_HTML.to_vec()),
++            "/app.css" => ("200 OK", "text/css; charset=utf-8", DASHBOARD_CSS.to_vec()),
++            "/app.js" => ("200 OK", "text/javascript; charset=utf-8", DASHBOARD_JS.to_vec()),
++            "/icon.svg" => ("200 OK", "image/svg+xml", DASHBOARD_ICON.to_vec()),
++            "/api/status" => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&dashboard_status(st)).unwrap_or_else(|_| b"{}".to_vec())),
++            _ => ("404 Not Found", "text/plain; charset=utf-8", b"Not found".to_vec()),
++        }
++    };
++    let headers = format!(
++        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nConnection: close\r\n\r\n",
++        status, content_type, body.len()
++    );
++    let mut response = headers.into_bytes();
++    if method != "HEAD" { response.extend_from_slice(&body); }
++    response
++}
++
++fn handle_dashboard_connection(mut stream: TcpStream, stats: &Arc<Mutex<Stats>>) {
++    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
++    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
++    let mut request = [0u8; 8192];
++    let read = match stream.read(&mut request) {
++        Ok(read) if read > 0 => read,
++        _ => return,
++    };
++    let request_line = String::from_utf8_lossy(&request[..read]);
++    let mut parts = request_line.lines().next().unwrap_or_default().split_whitespace();
++    let method = parts.next().unwrap_or_default();
++    let path = parts.next().unwrap_or_default();
++    let response = if method.is_empty() || path.is_empty() {
++        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
++    } else {
++        dashboard_http_response(method, path, &stats.lock().unwrap())
++    };
++    let _ = stream.write_all(&response);
++}
++
++fn spawn_dashboard(stats: Arc<Mutex<Stats>>) {
++    std::thread::spawn(move || {
++        let listener = match TcpListener::bind(("0.0.0.0", DASHBOARD_PORT)) {
++            Ok(listener) => listener,
++            Err(error) => {
++                eprintln!("Mining dashboard failed to bind on port {}: {}", DASHBOARD_PORT, error);
++                return;
++            }
++        };
++        for stream in listener.incoming() {
++            if let Ok(stream) = stream { handle_dashboard_connection(stream, &stats); }
++        }
++    });
++}
++
+ fn floor_pot(diff: f64) -> u32 {
+     let d = if diff >= 1.0 { diff as u64 } else { 1 };
+     63u32.saturating_sub(d.leading_zeros())
+@@ -306,6 +450,83 @@ fn fmt_diff(d: f64) -> String {
+     else { format!("{:.2}", d) }
+ }
+
++fn fmt_hashrate(ghs: f64) -> String {
++    let value = ghs.max(0.0);
++    if value >= 1.0 { format!("{:.2} GH/s", value) }
++    else if value >= 0.001 { format!("{:.2} MH/s", value * 1_000.0) }
++    else if value >= 0.000001 { format!("{:.2} kH/s", value * 1_000_000.0) }
++    else if value > 0.0 { format!("{:.2} H/s", value * 1_000_000_000.0) }
++    else { "0 H/s".into() }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{dashboard_http_response, fmt_hashrate, Stats};
++    use serde_json::Value;
++    use std::time::{Duration, Instant};
++
++    #[test]
++    fn hashrate_uses_readable_units() {
++        assert_eq!(fmt_hashrate(0.0), "0 H/s");
++        assert_eq!(fmt_hashrate(0.000000123), "123.00 H/s");
++        assert_eq!(fmt_hashrate(0.000456), "456.00 kH/s");
++        assert_eq!(fmt_hashrate(0.125), "125.00 MH/s");
++        assert_eq!(fmt_hashrate(2.5), "2.50 GH/s");
++    }
++
++    #[test]
++    fn dashboard_status_reports_session_results() {
++        let mut stats = Stats::default();
++        stats.connected = true;
++        stats.network = "mainnet".into();
++        stats.endpoint = "pool.example.com:4445".into();
++        stats.addr = "bc1qexample".into();
++        stats.hr_total = 0.000456;
++        stats.gpu_names = vec!["CPU (4 threads)".into()];
++        stats.gpu_ghs = vec![0.000456];
++        stats.dashboard_hist.extend([0.000123, 0.000456]);
++        stats.accepted = 12;
++        stats.rejected = 1;
++        stats.blocks = 2;
++        stats.best_diff = 4.91;
++        stats.diff = 8.0;
++        stats.started = Some(Instant::now() - Duration::from_secs(90));
++        stats.logline("share accepted".into());
++
++        let response = dashboard_http_response("GET", "/api/status", &stats);
++        let response = String::from_utf8(response).expect("response should be UTF-8");
++        let (headers, body) = response.split_once("\r\n\r\n").expect("response should contain headers");
++        assert!(headers.starts_with("HTTP/1.1 200 OK"));
++        assert!(headers.contains("Content-Type: application/json"));
++        let body: Value = serde_json::from_str(body).expect("status should be JSON");
++        assert_eq!(body["state"], "mining");
++        assert_eq!(body["hashrate"], "456.00 kH/s");
++        assert_eq!(body["hashrateHps"], 456000.0);
++        assert_eq!(body["workerCount"], 1);
++        assert_eq!(body["workers"][0]["name"], "CPU (4 threads)");
++        assert_eq!(body["accepted"], 12);
++        assert_eq!(body["rejected"], 1);
++        assert_eq!(body["blocks"], 2);
++        assert_eq!(body["events"][0], "share accepted");
++        assert!(body["uptimeSeconds"].as_u64().unwrap_or(0) >= 90);
++    }
++
++    #[test]
++    fn dashboard_serves_secure_read_only_assets() {
++        let stats = Stats::default();
++        let page = String::from_utf8(dashboard_http_response("GET", "/", &stats)).expect("page should be UTF-8");
++        assert!(page.starts_with("HTTP/1.1 200 OK"));
++        assert!(page.contains("Content-Security-Policy:"));
++        assert!(page.contains("<title>pyblockMiner Status</title>"));
++
++        let missing = String::from_utf8(dashboard_http_response("GET", "/missing", &stats)).expect("response should be UTF-8");
++        assert!(missing.starts_with("HTTP/1.1 404 Not Found"));
++
++        let write = String::from_utf8(dashboard_http_response("POST", "/api/status", &stats)).expect("response should be UTF-8");
++        assert!(write.starts_with("HTTP/1.1 405 Method Not Allowed"));
++    }
++}
++
+ fn cpu_grind(prevhash_hex: &str, ntime_hex: &str, work_root_hex: &str, bits: u32, threads: usize, nstart: u64, span: u64) -> Vec<String> {
+     let prevhash = hex::decode(prevhash_hex).unwrap_or_default();
+     let mut ntime8 = hex::decode(ntime_hex).unwrap_or_default(); ntime8.resize(8, 0);
+@@ -686,7 +907,10 @@ fn engine(stats: Arc<Mutex<Stats>>, tgt: Arc<Mutex<Target>>, ngpu: u32, cpu_thre
+                 st.hr_total = st.gpu_ghs.iter().sum();
+                 let hv = (st.hr_total * 100.0) as u64;
+                 st.hr_hist.push_back(hv);
++                let dashboard_sample = st.hr_total;
++                st.dashboard_hist.push_back(dashboard_sample);
+                 while st.hr_hist.len() > 512 { st.hr_hist.pop_front(); }   // keep enough samples so the Sparkline fills wide terminals (it shows the last <width> points)
++                while st.dashboard_hist.len() > 512 { st.dashboard_hist.pop_front(); }
+             }
+             user.pump(&stats);
+             if let Some(d) = dev.as_mut() { d.pump(&stats); }
+@@ -1257,6 +1481,7 @@ fn main() {
+     let mut cfg = load_config();
+     let mut headless = false;
+     let mut genaddr_net: Option<String> = None;
++    let mut requested_cpu_threads: Option<usize> = None;
+     // CLI overrides (optional; config is the source of truth otherwise)
+     let mut i = 1;
+     while i < args.len() {
+@@ -1266,9 +1491,25 @@ fn main() {
+             "--pool" => { i += 1; if i < args.len() { if let Some(s) = cfg.stratums.get_mut(cfg.selected) { s.url = args[i].clone(); } } }
+             "--gpus" => { i += 1; if i < args.len() { cfg.gpus = args[i].parse().ok(); } }
+             "--cpu" => { cfg.cpu = true; }
++            "--cpu-threads" => {
++                i += 1;
++                requested_cpu_threads = match args.get(i).and_then(|value| value.parse::<usize>().ok()) {
++                    Some(value) if value >= 1 => Some(value),
++                    _ => {
++                        eprintln!("--cpu-threads requires an integer greater than or equal to 1");
++                        std::process::exit(2);
++                    }
++                };
++            }
+             "--donate" => { i += 1; if i < args.len() { cfg.donate = args[i].parse().unwrap_or(DONATE_MIN); } }
+             "--genaddr" | "--newaddr" => { let n = if i + 1 < args.len() && !args[i + 1].starts_with("--") { i += 1; net_cfg(&args[i]).name.to_string() } else { "mainnet".to_string() }; genaddr_net = Some(n); }
+             "--version" | "-V" => { println!("pyblockMiner {}", VERSION); return; }
++            "--help" | "-h" => {
++                println!("pyblockMiner {}", VERSION);
++                println!("Usage: pyblockMiner [--headless] [--cpu] [--cpu-threads <N>] [--network <NET>] [--addr <ADDRESS>] [--pool <HOST:PORT>] [--donate <PERCENT>]");
++                println!("  --cpu-threads <N>  CPU worker threads, clamped to available parallelism");
++                return;
++            }
+             "--headless" | "--daemon" | "--no-tui" => { headless = true; }
+             _ => {}
+         }
+@@ -1306,7 +1547,17 @@ fn main() {
+     let ngpu = if app.cfg.cpu { 0 } else { app.cfg.gpus.unwrap_or(if detected > 0 { detected } else { 1 }) };
+     let mut use_cpu = app.cfg.cpu;
+     if ngpu == 0 { use_cpu = true; }
+-    let cpu_threads = if use_cpu { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) } else { 0 };
++    let available_cpu_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
++    let cpu_threads = if use_cpu {
++        let requested = requested_cpu_threads.unwrap_or(available_cpu_threads);
++        let effective = requested.min(available_cpu_threads);
++        if effective != requested {
++            eprintln!("Configured CPU workers exceed the CPUs visible to the service. pyblockMiner will use {} workers.", effective);
++        }
++        effective
++    } else {
++        0
++    };
+
+     // shared state
+     let stats = Arc::new(Mutex::new(Stats::default()));
+@@ -1343,8 +1594,11 @@ fn main() {
+
+     // headless (service) mode: no TUI, heartbeat to stdout (journald). Engine + pollers already running.
+     if headless {
+-        println!("pyblockMiner (headless) · network={} · pool={} · addr={} · donate={:.1}%",
+-            app.network(), tgt.lock().unwrap().pool, app.addr(), donate0);
++        if std::env::var_os("PYBLOCK_DASHBOARD_DISABLED").is_none() {
++            spawn_dashboard(stats.clone());
++        }
++        println!("pyblockMiner (headless) · network={} · pool={} · addr={} · donate={:.1}% · cpu_threads={}",
++            app.network(), tgt.lock().unwrap().pool, app.addr(), donate0, cpu_threads);
+         let _ = std::io::stdout().flush();
+         let mut last_printed = 0usize;
+         loop {
+@@ -1357,8 +1611,8 @@ fn main() {
+                 (st.network.clone(), st.connected, st.hr_total, st.gpu_ghs.len(), st.blocks, st.accepted, st.rejected, st.net_height, st.best_diff, fresh)
+             };
+             for l in &newlogs { println!("  · {}", l); }
+-            println!("{} · {} · {:.1} GH/s ({}w) · blocks {} · {} acc (rej {}) · net_h {} · best {}",
+-                net, if conn { "LIVE" } else { "waiting" }, hr, nworkers, blk, acc, rej, neth, fmt_diff(bd));
++            println!("{} · {} · {} ({}w) · blocks {} · {} acc (rej {}) · net_h {} · best {}",
++                net, if conn { "LIVE" } else { "waiting" }, fmt_hashrate(hr), nworkers, blk, acc, rej, neth, fmt_diff(bd));
+             let _ = std::io::stdout().flush();
+         }
+     }
+diff --git a/tests/cli.rs b/tests/cli.rs
+new file mode 100644
+index 0000000..a357011
+--- /dev/null
++++ b/tests/cli.rs
+@@ -0,0 +1,74 @@
++use std::io::{BufRead, BufReader};
++use std::process::{Command, Output, Stdio};
++
++fn command() -> Command {
++    let mut command = Command::new(env!("CARGO_BIN_EXE_pyblockMiner"));
++    command.env("XDG_CONFIG_HOME", std::env::temp_dir().join("pyblock-miner-cli-tests"));
++    command.env("PYBLOCK_DASHBOARD_DISABLED", "1");
++    command
++}
++
++fn output(args: &[&str]) -> Output {
++    command().args(args).output().expect("binary should execute")
++}
++
++fn headless_banner(requested: usize) -> String {
++    let mut child = command()
++        .args([
++            "--headless",
++            "--cpu",
++            "--cpu-threads",
++            &requested.to_string(),
++            "--network",
++            "regtest",
++            "--addr",
++            "bcrt1qtest",
++            "--pool",
++            "127.0.0.1:1",
++        ])
++        .stdout(Stdio::piped())
++        .spawn()
++        .expect("headless process should start");
++    let stdout = child.stdout.take().expect("stdout should be captured");
++    let mut line = String::new();
++    BufReader::new(stdout)
++        .read_line(&mut line)
++        .expect("headless banner should be readable");
++    child.kill().expect("headless process should stop");
++    child.wait().expect("headless process should be reaped");
++    line
++}
++
++#[test]
++fn version_is_reported() {
++    let result = output(&["--version"]);
++    assert!(result.status.success());
++    assert_eq!(String::from_utf8_lossy(&result.stdout), "pyblockMiner 0.2.18\n");
++}
++
++#[test]
++fn help_lists_cpu_threads() {
++    let result = output(&["--help"]);
++    assert!(result.status.success());
++    assert!(String::from_utf8_lossy(&result.stdout).contains("--cpu-threads <N>"));
++}
++
++#[test]
++fn zero_cpu_threads_is_rejected() {
++    let result = output(&["--cpu-threads", "0"]);
++    assert_eq!(result.status.code(), Some(2));
++    assert!(String::from_utf8_lossy(&result.stderr).contains("greater than or equal to 1"));
++}
++
++#[test]
++fn configured_cpu_threads_are_used_in_headless_mode() {
++    assert!(headless_banner(1).contains("cpu_threads=1"));
++}
++
++#[test]
++fn excessive_cpu_threads_are_clamped() {
++    let available = std::thread::available_parallelism()
++        .map(|value| value.get())
++        .unwrap_or(4);
++    assert!(headless_banner(available + 1).contains(&format!("cpu_threads={}", available)));
++}
