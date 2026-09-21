@@ -1,19 +1,19 @@
 diff --git a/src/main.rs b/src/main.rs
-index 0d2f5ae..30408e1 100644
+index 1ba225b..76c4cff 100644
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -5,7 +5,7 @@
+@@ -7,7 +7,7 @@
  // You mine to YOUR address → keep 99.1% of every block · PyBLØCK pool fee 0.9%. Non-custodial.
  use std::collections::{HashMap, VecDeque};
  use std::io::{BufRead, BufReader, Read, Write};
 -use std::net::TcpStream;
 +use std::net::{TcpListener, TcpStream};
  use std::path::{Path, PathBuf};
- use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+ use std::process::{Child, ChildStdin, Command, Stdio};
  use std::sync::{Arc, Mutex};
-@@ -23,6 +23,11 @@ const DONATE_POOL: &str = "pool.pyblock.xyz:4445";
- const DEV_DONATION_ADDR: &str = "1PyBLoCKdiaC46vD9CWcmxa3ey2VzSc5Q2";
- const DONATE_MIN: f64 = 2.0;
+@@ -48,6 +48,11 @@ fn is_sha256_job(job: &[Value]) -> bool {
+ }
+ fn pct(bps: u64) -> String { let v = bps as f64 / 100.0; if v.fract().abs() < 1e-9 { format!("{:.0}%", v) } else { format!("{:.1}%", v) } }
  const VERSION: &str = env!("CARGO_PKG_VERSION");   // from Cargo.toml — shown in TUI footer, --version, and the stratum UA
 +const DASHBOARD_PORT: u16 = 8080;
 +const DASHBOARD_HTML: &[u8] = include_bytes!("../dashboard/index.html");
@@ -23,7 +23,7 @@ index 0d2f5ae..30408e1 100644
 
  // PyBLØCK palette
  const GRN: Color = Color::Rgb(0, 255, 65);
-@@ -208,6 +213,7 @@ struct Stats {
+@@ -486,6 +491,7 @@ struct Stats {
      rejected: u64,
      hr_total: f64,
      hr_hist: VecDeque<u64>,
@@ -31,10 +31,10 @@ index 0d2f5ae..30408e1 100644
      log: VecDeque<String>,
      started: Option<Instant>,
      net_ok: bool,
-@@ -234,6 +240,193 @@ impl Stats {
-     }
+@@ -646,6 +652,193 @@ fn norm_diff(diff: f64) -> f64 {
+     let x = diff * 65536.0 / 65535.0;
+     if (x - x.round()).abs() < 0.01 { x.round().max(1.0) } else { diff.max(1e-9) }
  }
-
 +#[derive(Deserialize, Serialize)]
 +#[serde(rename_all = "camelCase")]
 +struct DashboardWorker {
@@ -225,7 +225,7 @@ index 0d2f5ae..30408e1 100644
  fn floor_pot(diff: f64) -> u32 {
      let d = if diff >= 1.0 { diff as u64 } else { 1 };
      63u32.saturating_sub(d.leading_zeros())
-@@ -306,6 +499,84 @@ fn fmt_diff(d: f64) -> String {
+@@ -726,6 +919,84 @@ fn fmt_diff(d: f64) -> String {
      else { format!("{:.2}", d) }
  }
 
@@ -239,7 +239,7 @@ index 0d2f5ae..30408e1 100644
 +}
 +
 +#[cfg(test)]
-+mod tests {
++mod dashboard_tests {
 +    use super::{dashboard_http_response, fmt_hashrate, Stats};
 +    use serde_json::Value;
 +    use std::time::{Duration, Instant};
@@ -310,20 +310,20 @@ index 0d2f5ae..30408e1 100644
  fn cpu_grind(prevhash_hex: &str, ntime_hex: &str, work_root_hex: &str, bits: u32, threads: usize, nstart: u64, span: u64) -> Vec<String> {
      let prevhash = hex::decode(prevhash_hex).unwrap_or_default();
      let mut ntime8 = hex::decode(ntime_hex).unwrap_or_default(); ntime8.resize(8, 0);
-@@ -686,7 +957,10 @@ fn engine(stats: Arc<Mutex<Stats>>, tgt: Arc<Mutex<Target>>, ngpu: u32, cpu_thre
-                 st.hr_total = st.gpu_ghs.iter().sum();
-                 let hv = (st.hr_total * 100.0) as u64;
-                 st.hr_hist.push_back(hv);
-+                let dashboard_sample = st.hr_total;
-+                st.dashboard_hist.push_back(dashboard_sample);
-                 while st.hr_hist.len() > 512 { st.hr_hist.pop_front(); }   // keep enough samples so the Sparkline fills wide terminals (it shows the last <width> points)
-+                while st.dashboard_hist.len() > 512 { st.dashboard_hist.pop_front(); }
-             }
-             user.pump(&stats);
-             if let Some(d) = dev.as_mut() { d.pump(&stats); }
-@@ -1257,6 +1531,10 @@ fn main() {
-     let mut cfg = load_config();
-     let mut headless = false;
+@@ -1351,7 +1622,10 @@ fn engine(stats: Arc<Mutex<Stats>>, tgt: Arc<Mutex<Target>>, ngpu: u32, cpu_thre
+             st.hr_total = st.gpu_ghs.iter().sum();
+             let hv = (st.hr_total * 100.0) as u64;
+             st.hr_hist.push_back(hv);
++            let dashboard_sample = st.hr_total;
++            st.dashboard_hist.push_back(dashboard_sample);
+             while st.hr_hist.len() > 512 { st.hr_hist.pop_front(); }   // keep enough samples so the Sparkline fills wide terminals (it shows the last <width> points)
++            while st.dashboard_hist.len() > 512 { st.dashboard_hist.pop_front(); }
+             // per-group hashrate: what actually mined it THIS sweep, smoothed (a split worker alternates sweep by sweep)
+             let ghs = st.gpu_ghs.clone();
+             for (si, s) in sessions.iter_mut().enumerate() {
+@@ -3093,6 +3367,10 @@ fn main() {
+     let mut update_to = String::new();
+     cleanup_old_binaries();
      let mut genaddr_net: Option<String> = None;
 +    let mut requested_cpu_threads: Option<usize> = None;
 +    let mut dashboard_port: u16 = DASHBOARD_PORT;
@@ -332,10 +332,10 @@ index 0d2f5ae..30408e1 100644
      // CLI overrides (optional; config is the source of truth otherwise)
      let mut i = 1;
      while i < args.len() {
-@@ -1266,9 +1544,73 @@ fn main() {
-             "--pool" => { i += 1; if i < args.len() { if let Some(s) = cfg.stratums.get_mut(cfg.selected) { s.url = args[i].clone(); } } }
-             "--gpus" => { i += 1; if i < args.len() { cfg.gpus = args[i].parse().ok(); } }
-             "--cpu" => { cfg.cpu = true; }
+@@ -3131,9 +3409,73 @@ fn main() {
+                 for (w, n) in parse_gpu_pools(&args[i]) { if n.is_empty() { cfg.gpu_pools.remove(&w); } else { cfg.gpu_pools.insert(w, n); } } } }
+             "--update" => { update_now = true; }
+             "--update-to" => { i += 1; if i < args.len() { update_now = true; update_to = args[i].trim_start_matches('v').to_string(); } }   // pin a release (support / rollback / testing)
 +            "--dashboard-port" => {
 +                i += 1;
 +                dashboard_port = match args.get(i).and_then(|value| value.parse::<u16>().ok()) {
@@ -406,11 +406,17 @@ index 0d2f5ae..30408e1 100644
              "--headless" | "--daemon" | "--no-tui" => { headless = true; }
              _ => {}
          }
-@@ -1306,7 +1648,17 @@ fn main() {
-     let ngpu = if app.cfg.cpu { 0 } else { app.cfg.gpus.unwrap_or(if detected > 0 { detected } else { 1 }) };
-     let mut use_cpu = app.cfg.cpu;
-     if ngpu == 0 { use_cpu = true; }
+@@ -3183,10 +3525,20 @@ fn main() {
+     // signals READY; if there's no device or it isn't built, spawn_daemon drops it and the engine falls
+     // back to CPU). `--cpu` forces CPU-only.
+     let detected = gpu_names().len() as u32;
+-    // --gpus 0 = CPU only · --cpu = the CPU joins the GPUs as one more worker (what the README always said)
+-    let ngpu = app.cfg.gpus.unwrap_or(if detected > 0 { detected } else { 1 });
+-    let use_cpu = app.cfg.cpu || ngpu == 0;
 -    let cpu_threads = if use_cpu { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) } else { 0 };
++    let ngpu = if app.cfg.cpu { 0 } else { app.cfg.gpus.unwrap_or(if detected > 0 { detected } else { 1 }) };
++    let mut use_cpu = app.cfg.cpu;
++    if ngpu == 0 { use_cpu = true; }
 +    let available_cpu_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
 +    let cpu_threads = if use_cpu {
 +        let requested = requested_cpu_threads.unwrap_or(available_cpu_threads);
@@ -425,7 +431,7 @@ index 0d2f5ae..30408e1 100644
 
      // shared state
      let stats = Arc::new(Mutex::new(Stats::default()));
-@@ -1343,8 +1695,11 @@ fn main() {
+@@ -3354,8 +3706,11 @@ fn main() {
 
      // headless (service) mode: no TUI, heartbeat to stdout (journald). Engine + pollers already running.
      if headless {
@@ -438,21 +444,21 @@ index 0d2f5ae..30408e1 100644
 +            app.network(), tgt.lock().unwrap().pool, app.addr(), donate0, cpu_threads);
          let _ = std::io::stdout().flush();
          let mut last_printed = 0usize;
-         loop {
-@@ -1357,8 +1712,8 @@ fn main() {
-                 (st.network.clone(), st.connected, st.hr_total, st.gpu_ghs.len(), st.blocks, st.accepted, st.rejected, st.net_height, st.best_diff, fresh)
-             };
-             for l in &newlogs { println!("  · {}", l); }
+         let mut auto_update_tried = String::new();
+@@ -3372,8 +3727,8 @@ fn main() {
+             // headless: the bells still ring (journald/tmux forward them), the chime already played on the alert thread
+             let bells = std::mem::take(&mut stats.lock().unwrap().ring_bell);
+             for _ in 0..bells { print!("\x07"); }
 -            println!("{} · {} · {:.1} GH/s ({}w) · blocks {} · {} acc (rej {}) · net_h {} · best {}",
 -                net, if conn { "LIVE" } else { "waiting" }, hr, nworkers, blk, acc, rej, neth, fmt_diff(bd));
 +            println!("{} · {} · {} ({}w) · blocks {} · {} acc (rej {}) · net_h {} · best {}",
 +                net, if conn { "LIVE" } else { "waiting" }, fmt_hashrate(hr), nworkers, blk, acc, rej, neth, fmt_diff(bd));
              let _ = std::io::stdout().flush();
-         }
-     }
+             // --auto-update: a service that keeps itself current. One attempt per announced version; on failure it
+             // keeps mining on the old build and says so (journald), instead of retrying every 5s.
 diff --git a/tests/cli.rs b/tests/cli.rs
 new file mode 100644
-index 0000000..e8a9461
+index 0000000..ebe13d9
 --- /dev/null
 +++ b/tests/cli.rs
 @@ -0,0 +1,78 @@
@@ -501,7 +507,7 @@ index 0000000..e8a9461
 +fn version_is_reported() {
 +    let result = output(&["--version"]);
 +    assert!(result.status.success());
-+    assert_eq!(String::from_utf8_lossy(&result.stdout), "pyblockMiner 0.2.18\n");
++    assert_eq!(String::from_utf8_lossy(&result.stdout), "pyblockMiner 0.2.33\n");
 +}
 +
 +#[test]

@@ -90,6 +90,63 @@ test('rejects a preset from another network and identifies its profile', () => {
   )
 })
 
+test('resolves a mainnet CHIRP-PRIME profile to its local DATUM gateway', () => {
+  const datum = profile({
+    name: 'CHIRP-PRIME',
+    network: 'mainnet',
+    payoutAddress: mainnetAddress,
+    poolSelection: 'chirp-datum',
+    customStratum: ' Gateway.LAN:23334 ',
+  })
+  assert.deepEqual(validateMinerConfig(config({ miners: [datum] })), {
+    ok: true,
+    value: {
+      ...config({ miners: [datum] }),
+      miners: [{ ...datum, customStratum: 'gateway.lan:23334' }],
+    },
+    miners: [
+      {
+        ...datum,
+        customStratum: 'gateway.lan:23334',
+        pool: 'gateway.lan:23334',
+      },
+    ],
+  })
+})
+
+test('keeps CHIRP-PRIME on mainnet and requires a gateway endpoint', () => {
+  assert.deepEqual(
+    validateMinerConfig(
+      config({
+        miners: [
+          profile({
+            name: 'Wrong network',
+            poolSelection: 'chirp-datum',
+            customStratum: 'gateway.lan:23334',
+          }),
+        ],
+      }),
+    ),
+    { ok: false, issue: 'pool-network', minerName: 'Wrong network' },
+  )
+  assert.deepEqual(
+    validateMinerConfig(
+      config({
+        miners: [
+          profile({
+            name: 'Missing gateway',
+            network: 'mainnet',
+            payoutAddress: mainnetAddress,
+            poolSelection: 'chirp-datum',
+            customStratum: '',
+          }),
+        ],
+      }),
+    ),
+    { ok: false, issue: 'custom-stratum', minerName: 'Missing gateway' },
+  )
+})
+
 test('resolves independent pools and normalizes saved profile values', () => {
   const second = profile({
     name: 'Mainnet Chirp',

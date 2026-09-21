@@ -49,12 +49,13 @@ const minerSpec = InputSpec.of({
   poolSelection: Value.select({
     name: i18n('Pool'),
     description: i18n(
-      'Choose a preset compatible with the selected network or provide a custom raw host and port.',
+      'Choose a preset compatible with the selected network. CHIRP-PRIME DATUM requires the Stratum endpoint of your own gateway.',
     ),
     default: minerProfileDefaults.poolSelection,
     values: {
       lotto: i18n('PyBLOCK LOTTO'),
-      chirp: i18n('PyBLOCK CHIRP'),
+      chirp: i18n('PyBLOCK CHIRP Legacy (:5574)'),
+      'chirp-datum': i18n('PyBLOCK CHIRP-PRIME DATUM'),
       carousel: i18n('PyBLOCK CAROUSEL'),
       testnet4: i18n('PyBLOCK testnet4'),
       regtest: i18n('PyBLOCK regtest'),
@@ -62,13 +63,13 @@ const minerSpec = InputSpec.of({
     },
   }),
   customStratum: Value.text({
-    name: i18n('Custom Stratum'),
+    name: i18n('Gateway or Custom Stratum'),
     description: i18n(
-      'Required only when Custom is selected. Enter hostname:port without a URL scheme.',
+      'Required for CHIRP-PRIME DATUM and Custom. Enter the gateway or pool hostname and Stratum port without a URL scheme. Do not enter the remote DATUM pool port.',
     ),
     required: false,
     default: null,
-    placeholder: 'pool.example.com:3333',
+    placeholder: 'gateway.lan:23334',
   }),
   cpuWorkers: Value.number({
     name: i18n('CPU Workers'),
@@ -133,7 +134,7 @@ const issueMessages: Record<ConfigIssue, string> = {
     'The selected pool does not support the selected network.',
   ),
   'custom-stratum': i18n(
-    'Custom Stratum must be a valid hostname:port with a port from 1 to 65535.',
+    'Gateway or Custom Stratum must be a valid hostname:port with a port from 1 to 65535.',
   ),
   'cpu-workers': i18n('CPU workers must be an integer from 1 to 256.'),
   'cpu-budget': i18n(

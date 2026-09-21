@@ -4,13 +4,15 @@
 
 pyblockMiner is a headless CPU mining service for BLAKE2b work served by compatible Stratum pools. The StartOS package supervises the miner, stores its configuration, limits its CPU worker count, and lowers its scheduler priority.
 
+This package pins upstream pyblockMiner `v0.2.33`. That release distinguishes accepted DATUM shares from network-valid blocks, so the dashboard's Blocks Found counter no longer rises for ordinary accepted shares.
+
 The payout address remains under the user’s control. This package does not create a wallet, generate a private key, store a WIF, or hold mining rewards.
 
 ## Features
 
 - CPU-only mining on x86_64 and aarch64
 - Headless service operation without a terminal UI
-- Presets for current PyBLOCK mainnet, testnet4, and regtest pools
+- Presets for current PyBLOCK mainnet, testnet4, regtest, and CHIRP-PRIME DATUM mining
 - Custom raw `hostname:port` Stratum endpoints
 - Network-aware payout address validation
 - Configurable CPU workers with a conservative default of two
@@ -32,6 +34,26 @@ Run **Configure Miner** before starting the service. Choose a network, enter a p
 
 The package passes every setting as a separate process argument. User input is never interpolated into a shell command.
 
+## CHIRP-PRIME DATUM
+
+CHIRP-PRIME uses two protocols. A DATUM gateway connects upstream to PyBLOCK, while pyblockMiner connects to that gateway through its local Stratum V1 listener. pyblockMiner must not connect directly to `b.pyblock.xyz:28917` because that port speaks DATUM, not Stratum.
+
+First set up one gateway using the current instructions on the [CHIRP page](https://b.pyblock.xyz:8443/chirp.php#datum). The gateway requires a synced BLAKE2b-capable Bitcoin node and listens for miners on port `23334` by default.
+
+In **Configure Miners**, select Mainnet, choose **PyBLOCK CHIRP-PRIME DATUM**, and enter the reachable gateway endpoint such as `gateway.lan:23334`. Use a LAN address or hostname that the StartOS service can reach. `127.0.0.1` refers to the miner container and normally cannot reach a gateway running elsewhere.
+
+The **PyBLOCK CHIRP Legacy (:5574)** preset remains available during the migration window. A saved legacy profile is not changed automatically.
+
+The local Docker launcher can send both CPU miners to the same gateway:
+
+```sh
+PAYOUT_ADDRESS=bc1q... \
+CHIRP_DATUM_GATEWAY=192.168.1.50:23334 \
+docker/run-local-miners 2
+```
+
+`MINER_ONE_POOL` and `MINER_TWO_POOL` can still override the shared gateway endpoint independently.
+
 ## Networking
 
 The package exposes a private StartOS HTTP interface for the read-only mining dashboard. The miner serves it on internal port `8080`; StartOS controls the user-facing address. The package declares no service dependencies.
@@ -49,7 +71,7 @@ The balance request includes the configured payout address. A custom primary poo
 
 ## Persistence and Backups
 
-The `main` volume stores `startos-config.json`, containing the network, payout address, pool selection, custom Stratum when used, CPU workers, and donation percentage. StartOS backups include the entire volume.
+The `main` volume stores `startos-config.json`, containing the network, payout address, pool selection, DATUM gateway or custom Stratum when used, CPU workers, and donation percentage. StartOS backups include the entire volume.
 
 Backups do not contain a wallet private key because this package never generates or stores one. Back up the wallet controlling the payout address separately.
 
@@ -61,7 +83,7 @@ Readiness requests the dashboard status endpoint and confirms that the supervise
 
 Open **Mining Dashboard** from the package interfaces to view current hashrate, CPU workers, session uptime, accepted and rejected shares, best share difficulty, blocks found, pool information, a short in-memory hashrate chart, and recent events.
 
-The dashboard is read-only. It refreshes every five seconds and stores no history. Session counters and chart samples reset when the miner restarts. Use **Configure Miner** for settings.
+The dashboard is read-only. It refreshes every five seconds and stores no history. Accepted Shares counts valid pool shares. Blocks Found only counts shares that also meet the network target when the miner has a trustworthy network target. Session counters and chart samples reset when the miner restarts. Use **Configure Miner** for settings.
 
 ## Limitations
 

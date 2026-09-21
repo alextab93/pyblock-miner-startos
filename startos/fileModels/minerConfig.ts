@@ -5,6 +5,7 @@ export const networks = ['mainnet', 'testnet4', 'regtest'] as const
 export const poolSelections = [
   'lotto',
   'chirp',
+  'chirp-datum',
   'carousel',
   'testnet4',
   'regtest',

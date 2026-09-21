@@ -35,7 +35,7 @@ let selectedChartIndex = -1
 
 const poolNames = {
   "pool.pyblock.xyz:4445": "Lotto",
-  "pool.pyblock.xyz:5574": "Chirp",
+  "pool.pyblock.xyz:5574": "Chirp Legacy",
   "pool.pyblock.xyz:30110": "Carousel",
   "pool.pyblock.xyz:23111": "Testnet4",
   "pool.pyblock.xyz:23110": "Regtest",

@@ -81,7 +81,16 @@ function validateProfile(
 
   let pool: string
   let customStratum = profile.customStratum.trim()
-  if (profile.poolSelection === 'custom') {
+  if (
+    profile.poolSelection === 'custom' ||
+    profile.poolSelection === 'chirp-datum'
+  ) {
+    if (
+      profile.poolSelection === 'chirp-datum' &&
+      profile.network !== 'mainnet'
+    ) {
+      return { ok: false, issue: 'pool-network' }
+    }
     const normalized = normalizeStratum(customStratum)
     if (!normalized) return { ok: false, issue: 'custom-stratum' }
     pool = normalized
@@ -183,5 +192,7 @@ export function presetSupportsNetwork(
   selection: PoolSelection,
   network: MinerNetwork,
 ): boolean {
-  return selection === 'custom' || poolPresets[selection].network === network
+  if (selection === 'custom') return true
+  if (selection === 'chirp-datum') return network === 'mainnet'
+  return poolPresets[selection].network === network
 }

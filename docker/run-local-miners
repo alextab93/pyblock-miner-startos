@@ -1,0 +1,209 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  printf '%s\n' \
+    'Usage: docker/run-local-miners [1|2]' \
+    '' \
+    'Configuration:' \
+    '  MINER_COUNT             Number of miners when no argument is provided' \
+    '  PYBLOCK_IMAGE           Container image' \
+    '  CONTAINER_NAME          Container name' \
+    '  PAYOUT_ADDRESS          Required payout address used by both miners' \
+    '  NETWORK                 Mining network' \
+    '  DONATION_PERCENT        Upstream donation percentage' \
+    '  CHIRP_DATUM_GATEWAY     Local DATUM gateway Stratum endpoint for both miners' \
+    '  MINER_ONE_NAME          First miner name' \
+    '  MINER_ONE_THREADS       First miner CPU threads' \
+    '  MINER_ONE_POOL          First miner Stratum host and port' \
+    '  MINER_ONE_PORT          First dashboard port' \
+    '  MINER_TWO_NAME          Second miner name' \
+    '  MINER_TWO_THREADS       Second miner CPU threads' \
+    '  MINER_TWO_POOL          Second miner Stratum host and port' \
+    '  MINER_TWO_PORT          Second dashboard port' \
+    '' \
+    'Defaults:' \
+    '  Without CHIRP_DATUM_GATEWAY, both miners use CHIRP Legacy at :5574.' \
+    '  With CHIRP_DATUM_GATEWAY, both use that local gateway unless overridden.' \
+    '  Miner 1 uses 2 threads and dashboard 8081.' \
+    '  Miner 2 uses 4 threads and dashboard 8082.'
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+if [ "$#" -gt 1 ]; then
+  usage >&2
+  exit 2
+fi
+
+miner_count=${1:-${MINER_COUNT:-1}}
+
+case "$miner_count" in
+  1)
+    default_miner_one_threads=2
+    ;;
+  2)
+    default_miner_one_threads=2
+    ;;
+  *)
+    printf 'MINER_COUNT must be 1 or 2\n' >&2
+    exit 2
+    ;;
+esac
+
+require_positive_integer() {
+  value=$1
+  name=$2
+  case "$value" in
+    ''|*[!0-9]*|0)
+      printf '%s must be a positive integer\n' "$name" >&2
+      exit 2
+      ;;
+  esac
+}
+
+docker_bin=${DOCKER_BIN:-docker}
+image=${PYBLOCK_IMAGE:-pyblock-miner-local}
+container_name=${CONTAINER_NAME:-pyblock-miners-local}
+payout_address=${PAYOUT_ADDRESS:-}
+network=${NETWORK:-mainnet}
+donation_percent=${DONATION_PERCENT:-2}
+default_miner_pool=${CHIRP_DATUM_GATEWAY:-pool.pyblock.xyz:5574}
+miner_one_name=${MINER_ONE_NAME:-Miner 1}
+miner_one_threads=${MINER_ONE_THREADS:-$default_miner_one_threads}
+miner_one_pool=${MINER_ONE_POOL:-$default_miner_pool}
+miner_one_port=${MINER_ONE_PORT:-8081}
+miner_two_name=${MINER_TWO_NAME:-Miner 2}
+miner_two_threads=${MINER_TWO_THREADS:-4}
+miner_two_pool=${MINER_TWO_POOL:-$default_miner_pool}
+miner_two_port=${MINER_TWO_PORT:-8082}
+
+require_positive_integer "$miner_one_threads" MINER_ONE_THREADS
+require_positive_integer "$miner_one_port" MINER_ONE_PORT
+
+if [ -z "$payout_address" ]; then
+  printf 'PAYOUT_ADDRESS is required\n' >&2
+  exit 2
+fi
+
+if [ "$miner_count" -eq 2 ]; then
+  require_positive_integer "$miner_two_threads" MINER_TWO_THREADS
+  require_positive_integer "$miner_two_port" MINER_TWO_PORT
+  if [ "$miner_one_port" -eq "$miner_two_port" ]; then
+    printf 'MINER_ONE_PORT and MINER_TWO_PORT must be different\n' >&2
+    exit 2
+  fi
+fi
+
+set -- run --rm -it --init \
+  --name "$container_name" \
+  -p "127.0.0.1:$miner_one_port:$miner_one_port"
+
+if [ "$miner_count" -eq 2 ]; then
+  set -- "$@" -p "127.0.0.1:$miner_two_port:$miner_two_port"
+fi
+
+set -- "$@" \
+  --entrypoint /bin/sh \
+  "$image" -c '
+set -eu
+
+miner_count=$1
+payout_address=$2
+network=$3
+donation_percent=$4
+miner_one_name=$5
+miner_one_threads=$6
+miner_one_pool=$7
+miner_one_port=$8
+miner_two_name=$9
+miner_two_threads=${10}
+miner_two_pool=${11}
+miner_two_port=${12}
+miner_one_pid=
+miner_two_pid=
+
+stop() {
+  trap - EXIT INT TERM
+  [ -z "$miner_one_pid" ] || kill -TERM "$miner_one_pid" 2>/dev/null || true
+  [ -z "$miner_two_pid" ] || kill -TERM "$miner_two_pid" 2>/dev/null || true
+  [ -z "$miner_one_pid" ] || wait "$miner_one_pid" 2>/dev/null || true
+  [ -z "$miner_two_pid" ] || wait "$miner_two_pid" 2>/dev/null || true
+}
+
+trap "stop; exit 143" INT TERM
+trap stop EXIT
+
+mkdir -p /tmp/miner-one
+
+set -- /usr/bin/nice -n 10 /usr/local/bin/pyblockMiner \
+  --headless \
+  --cpu \
+  --cpu-threads "$miner_one_threads" \
+  --network "$network" \
+  --addr "$payout_address" \
+  --pool "$miner_one_pool" \
+  --donate "$donation_percent" \
+  --dashboard-port "$miner_one_port" \
+  --miner-name "$miner_one_name"
+
+if [ "$miner_count" -eq 2 ]; then
+  set -- "$@" --dashboard-peer "$miner_two_name=$miner_two_port"
+fi
+
+XDG_CONFIG_HOME=/tmp/miner-one "$@" &
+miner_one_pid=$!
+
+if [ "$miner_count" -eq 2 ]; then
+  mkdir -p /tmp/miner-two
+  set -- /usr/bin/nice -n 10 /usr/local/bin/pyblockMiner \
+    --headless \
+    --cpu \
+    --cpu-threads "$miner_two_threads" \
+    --network "$network" \
+    --addr "$payout_address" \
+    --pool "$miner_two_pool" \
+    --donate "$donation_percent" \
+    --dashboard-port "$miner_two_port" \
+    --miner-name "$miner_two_name"
+  XDG_CONFIG_HOME=/tmp/miner-two "$@" &
+  miner_two_pid=$!
+fi
+
+while kill -0 "$miner_one_pid" 2>/dev/null; do
+  if [ "$miner_count" -eq 2 ] && ! kill -0 "$miner_two_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+set +e
+if ! kill -0 "$miner_one_pid" 2>/dev/null; then
+  wait "$miner_one_pid"
+  status=$?
+else
+  wait "$miner_two_pid"
+  status=$?
+fi
+set -e
+exit "$status"
+' runner \
+  "$miner_count" \
+  "$payout_address" \
+  "$network" \
+  "$donation_percent" \
+  "$miner_one_name" \
+  "$miner_one_threads" \
+  "$miner_one_pool" \
+  "$miner_one_port" \
+  "$miner_two_name" \
+  "$miner_two_threads" \
+  "$miner_two_pool" \
+  "$miner_two_port"
+
+exec "$docker_bin" "$@"
